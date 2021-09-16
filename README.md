@@ -54,6 +54,11 @@ To run the test script
 MW_API_KEY="YOUR MONEYWAVE API KEY" MW_SECRET="YOUR MONEYWAVE SECRET KEY" MW_WALLET_PASSWORD="YOUR MONEYWAVE WALLET PASSWORD" PAYSTACK_PUBLIC_KEY="YOUR PAYSTACK PUBLIC KEY" ACCOUNT_EMAIL="YOUR EMAIL TO USE FOR NOTIFICATIONS" ACCOUNT_PASSWORD="YOUR EMAIL PASSWORD" NODE_ENV=production npm run test
 ```
 
+# Doc
+
 Documentaion for the api can be found here, [doc](https://documenter.getpostman.com/view/1676833/U16oq44V)
 
-Contact me if any issue is encountered or token and keys are needed, adedoyinademola397@gmail.com
+
+# Contact 
+
+Kindly reach out if any issue is encountered or token and keys are needed, adedoyinademola397@gmail.com
