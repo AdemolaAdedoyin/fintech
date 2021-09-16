@@ -19,11 +19,11 @@ Your system must have npm and node installed, and this can be done on the termin
 
 ```
 - Clone the repo https://github.com/AdemolaAdedoyin/fintech.git
-- Install npm packages, `npm install`
-- This is a locally hosted api, so you have to have `mySQL database server` running on your system. Either through xampp or installed using brew.
+- Install npm packages, npm install
+- This is a locally hosted api, so you have to have mySQL database server running on your system. Either through xampp or installed using brew.
 - A database to use must exist, and the name of this database will be passed when trying to start the server.
-- You need to have an account on [Moneywave] (https://moneywave.azurewebsites.net/#/login), to get test api and secret keys that will be used on the system.
-- You need to have an account on [paystack] (https://dashboard.paystack.com/#/login), to get test public key that will be used on the system.
+- You need to have an account on [Moneywave](https://moneywave.azurewebsites.net/#/login), to get test api and secret keys that will be used on the system.
+- You need to have an account on [paystack](https://dashboard.paystack.com/#/login), to get test public key that will be used on the system.
 ```
 
 ## Usage
