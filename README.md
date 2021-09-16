@@ -30,7 +30,7 @@ Your system must have npm and node installed, and this can be done on the termin
 
 Configs to be passed when trying to start the server
 
-````
+```
 - MW_API_KEY="YOUR MONEYWAVE API KEY"
 - MW_SECRET="YOUR MONEYWAVE SECRET KEY"
 - MW_WALLET_PASSWORD="YOUR MONEYWAVE WALLET PASSWORD"
