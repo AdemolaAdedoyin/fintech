@@ -1,4 +1,4 @@
-import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { HttpStatus, INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { Currency, WalletStatus } from '@prisma/client';
 import request from 'supertest';
@@ -160,15 +160,17 @@ describe('Identity and wallets (e2e)', () => {
     const bob = await register('bob@example.com');
     const aliceWallet = alice.initialWallet;
 
-    expect(aliceWallet).toBeDefined();
+    if (!aliceWallet) {
+      throw new Error('Registration did not return an initial wallet');
+    }
 
     await request(app.getHttpServer())
-      .get(`/api/v1/wallets/${aliceWallet!.id}`)
+      .get(`/api/v1/wallets/${aliceWallet.id}`)
       .set('Authorization', `Bearer ${bob.accessToken}`)
       .expect(HttpStatus.NOT_FOUND);
 
     await request(app.getHttpServer())
-      .get(`/api/v1/wallets/${aliceWallet!.id}`)
+      .get(`/api/v1/wallets/${aliceWallet.id}`)
       .set('Authorization', `Bearer ${alice.accessToken}`)
       .expect(HttpStatus.OK);
   });
@@ -223,12 +225,3 @@ describe('Identity and wallets (e2e)', () => {
     expect(wallets.find((wallet) => wallet.id === ngnWallet.id)?.status).toBe(WalletStatus.CLOSED);
   });
 });
-
-const HttpStatus = {
-  OK: 200,
-  CREATED: 201,
-  BAD_REQUEST: 400,
-  UNAUTHORIZED: 401,
-  NOT_FOUND: 404,
-  CONFLICT: 409,
-} as const;
