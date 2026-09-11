@@ -79,7 +79,24 @@ The first public money-movement workflow is built directly on the Phase 3 ledger
 - saved beneficiaries scoped to the authenticated owner
 - soft deletion for beneficiaries so removing a saved recipient does not erase historical transfer links
 
-Phase 4 intentionally remains synchronous. Reversals, async outbox processing, notifications, webhook delivery, and payment-provider integrations belong to later phases.
+### Phase 5 — reversals and audit ✅
+
+Reversals preserve the immutable accounting model instead of editing or deleting the original transfer:
+
+- a reversal is a separate `TransferReversal` record linked one-to-one to the original completed transfer
+- the original `Transfer` remains `COMPLETED` and its ledger history remains immutable
+- every reversal creates a new sealed ledger transaction with the exact opposite postings and the exact original amount/currency
+- only the authenticated original sender can reverse the transfer
+- the original transfer row is locked before reversal eligibility is checked, so competing reversal requests cannot compensate the same transfer twice
+- the existing non-negative customer-balance rule applies to reversals; if the recipient has already spent the funds, the reversal fails instead of forcing the recipient wallet negative
+- reversal requests require their own persisted `Idempotency-Key`, normalized request hash, successful replay behavior, payload-mismatch protection, and immutable terminal outcome
+- deterministic failed reversals remain failed for the same idempotency key even if wallet balances later change
+- `AuditLog` records are append-only and capture both `TRANSFER_CREATED` and `TRANSFER_REVERSED` business events
+- reversal rows and audit rows are protected against direct update/delete operations
+- deferred PostgreSQL integrity checks independently verify that a reversal exactly compensates its original transfer and has one matching reversal audit event
+- E2E concurrency coverage proves simultaneous reversal attempts result in exactly one compensating ledger transaction
+
+Phase 5 remains synchronous. Redis/BullMQ, transactional outbox dispatch, notifications, and retryable webhook delivery belong to Phase 6.
 
 ## Planned phases
 
@@ -87,14 +104,14 @@ Phase 4 intentionally remains synchronous. Reversals, async outbox processing, n
 2. **Identity and wallets** — registration/login, ownership authorization, wallet lifecycle, minor-unit money representation. ✅
 3. **Ledger core** — immutable ledger transactions/postings, balance invariants, atomic database transactions. ✅
 4. **Transfers** — internal transfers, idempotency, concurrency protection, beneficiaries. ✅
-5. **Reversals and audit** — compensating ledger entries, reversal rules, audit history.
+5. **Reversals and audit** — compensating ledger entries, reversal rules, audit history. ✅
 6. **Async infrastructure** — Redis/BullMQ, outbox processing, notifications, retryable webhook delivery.
 7. **Provider abstraction** — mock provider first, optional tokenized/hosted Paystack integration with verified webhooks.
 8. **Production polish** — deployment, observability, expanded security testing, architecture documentation.
 
 After the useful RiseBeta concepts are represented safely in this project, `riseBeta` will be archived as an earlier experimental iteration.
 
-## Public API available through Phase 4
+## Public API available through Phase 5
 
 | Method | Route | Purpose |
 | --- | --- | --- |
@@ -108,13 +125,16 @@ After the useful RiseBeta concepts are represented safely in this project, `rise
 | `POST` | `/api/v1/transfers` | Create an idempotent same-currency internal transfer |
 | `GET` | `/api/v1/transfers` | List transfers initiated by the authenticated user |
 | `GET` | `/api/v1/transfers/:transferId` | Read one transfer initiated by the authenticated user |
+| `POST` | `/api/v1/transfers/:transferId/reversal` | Create an idempotent compensating reversal |
+| `GET` | `/api/v1/transfers/:transferId/reversal` | Read the owned transfer's reversal |
+| `GET` | `/api/v1/audit` | List immutable transfer/reversal audit events for the authenticated user |
 | `POST` | `/api/v1/beneficiaries` | Save another user's active wallet as a beneficiary |
 | `GET` | `/api/v1/beneficiaries` | List active saved beneficiaries |
 | `DELETE` | `/api/v1/beneficiaries/:beneficiaryId` | Soft-delete a saved beneficiary |
 | `GET` | `/api/v1/health/live` | Process liveness |
 | `GET` | `/api/v1/health/ready` | PostgreSQL readiness |
 
-Swagger is available at `/docs` and documents the transfer `Idempotency-Key` header and request DTOs.
+Swagger is available at `/docs` and documents the transfer/reversal `Idempotency-Key` headers and request DTOs.
 
 ### Creating an internal transfer
 
@@ -138,6 +158,25 @@ Content-Type: application/json
 The amount is always expressed in minor units. For USD, `"2500"` represents `$25.00`. Successful retries with the same key and identical normalized request return the existing transfer instead of moving money again. Reusing the same key with a different request returns `409 Conflict`.
 
 A serialization conflict caused by another concurrent transfer also returns `409 Conflict`; retry that request with the **same** idempotency key. Because the conflicting database transaction did not commit, the retry can safely establish or replay the final result.
+
+### Reversing an internal transfer
+
+`POST /api/v1/transfers/:transferId/reversal` requires the original sender's bearer token and a separate `Idempotency-Key`. An optional reason may be supplied for operational context.
+
+```http
+POST /api/v1/transfers/33333333-3333-4333-8333-333333333333/reversal
+Authorization: Bearer <access-token>
+Idempotency-Key: reversal-2026-09-11-001
+Content-Type: application/json
+```
+
+```json
+{
+  "reason": "Duplicate payment"
+}
+```
+
+A reversal does not rewrite the original transfer. It creates a second immutable ledger transaction that credits the original source account and debits the original destination account for the same amount. If the destination wallet no longer has enough funds, the request returns `409 Conflict` and no partial reversal is committed. Retrying a deterministic failed reversal with the same idempotency key returns the stored failure even if balances later change.
 
 ## Ledger model
 
@@ -167,6 +206,22 @@ A valid transaction must have at least two non-zero postings, use one currency, 
 
 For internal wallet transfers, the source and destination wallet ledger accounts are the two posting accounts. The transfer row and ledger transaction share the same unique reference, and a deferred PostgreSQL integrity check independently verifies the source debit and destination credit match the transfer amount exactly.
 
+A reversal uses a new ledger transaction with the opposite postings rather than editing those original entries:
+
+```text
+Original transfer
+Source wallet                 -2500
+Destination wallet            +2500
+                              -----
+                                  0
+
+Compensating reversal
+Source wallet                 +2500
+Destination wallet            -2500
+                              -----
+                                  0
+```
+
 For future external funding, an internal clearing account can be the counterpart:
 
 ```text
@@ -182,7 +237,7 @@ This lets provider integrations arrive later without inventing or directly editi
 
 All balances and postings use PostgreSQL `BIGINT` values in the smallest currency unit. For example, `$10.25` is represented internally as `1025` cents and `₦5,000.00` as `500000` kobo.
 
-Because JavaScript numbers cannot safely represent every 64-bit integer, public wallet and transfer responses serialize monetary minor-unit values as decimal strings. Internal ledger arithmetic uses JavaScript `bigint`.
+Because JavaScript numbers cannot safely represent every 64-bit integer, public wallet, transfer, and reversal responses serialize monetary minor-unit values as decimal strings. Internal ledger arithmetic uses JavaScript `bigint`.
 
 ## Local setup
 
@@ -361,7 +416,7 @@ The rebuilt service follows these rules from the beginning:
 - the documented example JWT secret is explicitly rejected;
 - passwords are hashed with scrypt and plaintext passwords are never persisted;
 - JWT verification constrains algorithm, issuer, audience, expiry, and authenticated user existence;
-- authorization headers, cookies, passwords, and token-like fields are redacted from structured logs;
+- authorization headers, cookies, idempotency keys, passwords, and token-like fields are redacted from structured logs;
 - authenticated wallet ownership comes from the verified token identity rather than request-provided user IDs;
 - duplicate email and duplicate per-currency wallet constraints are enforced in PostgreSQL as well as the service layer;
 - wallet balances cannot be changed directly through application code outside the guarded ledger write context;
@@ -373,14 +428,17 @@ The rebuilt service follows these rules from the beginning:
 - wallet close operations take the same ledger-account lock used by financial postings;
 - transfer source ownership is checked against the authenticated user and independently rechecked by a deferred database constraint;
 - completed transfers are immutable and must reference the exact matching sealed ledger debit/credit transaction;
-- transfer retries require persisted idempotency keys and normalized request hashes;
+- transfer and reversal retries require persisted idempotency keys and normalized request hashes;
 - terminal idempotency outcomes cannot be rewritten or deleted;
+- reversals are immutable compensating events and must reference an exact matching sealed opposite ledger transaction;
+- only the original transfer sender may own its reversal, and a transfer can be reversed at most once;
+- audit history is append-only and deferred database checks bind transfer/reversal audit events to their owning actor and resource;
 - beneficiaries are owner-scoped and soft-deleted so transfer history remains referentially intact;
 - raw card PAN/CVV/PIN handling will not be part of the rebuilt payment flow;
 - user-controlled values are not concatenated into SQL;
 - the production container runs as a non-root user and installs dependencies from the committed lockfile.
 
-The transaction-local ledger-write and transfer-write settings are application/database integrity guards against accidental bypasses by normal application code. They are not intended to be security boundaries against an administrator with full PostgreSQL privileges; a production deployment with that threat model would add database-role separation and tighter privilege controls.
+The transaction-local ledger-write, transfer-write, reversal-write, and audit-write settings are application/database integrity guards against accidental bypasses by normal application code. They are not intended to be security boundaries against an administrator with full PostgreSQL privileges; a production deployment with that threat model would add database-role separation and tighter privilege controls.
 
 ## Historical context
 
