@@ -2,10 +2,12 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { LoggerModule } from 'nestjs-pino';
 import { AuthModule } from './auth/auth.module';
+import { BeneficiariesModule } from './beneficiaries/beneficiaries.module';
 import { validateEnvironment } from './config/env.validation';
 import { HealthModule } from './health/health.module';
 import { LedgerModule } from './ledger/ledger.module';
 import { PrismaModule } from './prisma/prisma.module';
+import { TransfersModule } from './transfers/transfers.module';
 import { WalletsModule } from './wallets/wallets.module';
 
 @Module({
@@ -37,6 +39,8 @@ import { WalletsModule } from './wallets/wallets.module';
     AuthModule,
     WalletsModule,
     LedgerModule,
+    BeneficiariesModule,
+    TransfersModule,
   ],
 })
 export class AppModule {}
