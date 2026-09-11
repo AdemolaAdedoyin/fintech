@@ -53,7 +53,7 @@ describe('Identity and wallets (e2e)', () => {
     );
     await app.init();
 
-    httpServer = app.getHttpServer<Server>();
+    httpServer = app.getHttpServer() as Server;
     prisma = app.get(PrismaService);
   });
 
