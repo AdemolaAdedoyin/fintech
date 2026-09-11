@@ -32,6 +32,12 @@ interface NotificationBody {
   readAt: string | null;
 }
 
+interface WebhookEndpointBody {
+  id: string;
+  enabled: boolean;
+  signingSecret?: string;
+}
+
 describe('Transactional outbox and async delivery (e2e)', () => {
   let app: INestApplication;
   let httpServer: Server;
@@ -251,24 +257,26 @@ describe('Transactional outbox and async delivery (e2e)', () => {
       })
       .expect(HttpStatus.CREATED);
 
-    expect(createResponse.body.signingSecret).toEqual(expect.any(String));
-    const endpointId = createResponse.body.id as string;
+    const createdEndpoint = createResponse.body as WebhookEndpointBody;
+    expect(createdEndpoint.signingSecret).toEqual(expect.any(String));
+    const endpointId = createdEndpoint.id;
 
     const listResponse = await request(httpServer)
       .get('/api/v1/webhooks/endpoints')
       .set('Authorization', `Bearer ${user.accessToken}`)
       .expect(HttpStatus.OK);
-    expect(listResponse.body).toEqual(
+    const listedEndpoints = listResponse.body as WebhookEndpointBody[];
+    expect(listedEndpoints).toEqual(
       expect.arrayContaining([expect.objectContaining({ id: endpointId, enabled: true })]),
     );
-    expect(listResponse.body[0]).not.toHaveProperty('signingSecret');
+    expect(listedEndpoints[0]).not.toHaveProperty('signingSecret');
 
     await request(httpServer)
       .delete(`/api/v1/webhooks/endpoints/${endpointId}`)
       .set('Authorization', `Bearer ${user.accessToken}`)
       .expect(HttpStatus.OK)
       .expect((response) => {
-        expect(response.body.enabled).toBe(false);
+        expect((response.body as WebhookEndpointBody).enabled).toBe(false);
       });
   });
 });

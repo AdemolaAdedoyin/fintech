@@ -104,8 +104,8 @@ export class AsyncRuntimeService implements OnModuleInit, OnModuleDestroy {
   }
 
   async ping(): Promise<string> {
-    const client = await this.domainQueue.client;
-    return client.ping();
+    await this.domainQueue.getJobCounts();
+    return 'PONG';
   }
 
   async dispatchOutbox(): Promise<void> {
@@ -394,7 +394,7 @@ export class AsyncRuntimeService implements OnModuleInit, OnModuleDestroy {
       throw new Error('Outbox event payload must be an object');
     }
 
-    const value = payload as Prisma.JsonObject;
+    const value = payload;
     const required = [
       'senderUserId',
       'recipientUserId',
