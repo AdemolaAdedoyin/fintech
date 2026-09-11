@@ -1,11 +1,6 @@
 import { HttpStatus, INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import {
-  Currency,
-  IdempotencyStatus,
-  Prisma,
-  TransferStatus,
-} from '@prisma/client';
+import { Currency, IdempotencyStatus, Prisma, TransferStatus } from '@prisma/client';
 import type { Server } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import request from 'supertest';
@@ -197,7 +192,9 @@ describe('Transfers, idempotency, and beneficiaries (e2e)', () => {
     };
 
     const first = await createTransfer(sender.accessToken, key, payload).expect(HttpStatus.CREATED);
-    const replay = await createTransfer(sender.accessToken, key, payload).expect(HttpStatus.CREATED);
+    const replay = await createTransfer(sender.accessToken, key, payload).expect(
+      HttpStatus.CREATED,
+    );
 
     expect((replay.body as TransferBody).id).toBe((first.body as TransferBody).id);
     expect(await prisma.transfer.count({ where: { id: (first.body as TransferBody).id } })).toBe(1);
