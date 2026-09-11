@@ -10,14 +10,15 @@ import {
 import {
   AuditAction,
   IdempotencyStatus,
+  OutboxEventType,
   Prisma,
   TransferStatus,
   WalletStatus,
   type Transfer,
 } from '@prisma/client';
 import { createHash, randomUUID } from 'node:crypto';
-import { LedgerService } from '../ledger/ledger.service';
 import { MAX_MINOR_UNITS } from '../ledger/ledger.invariants';
+import { LedgerService } from '../ledger/ledger.service';
 import { PrismaService } from '../prisma/prisma.service';
 import type { CreateTransferDto } from './dto/create-transfer.dto';
 import { toTransferResponse } from './transfer.mapper';
@@ -34,7 +35,8 @@ interface ExistingIdempotencyRecord {
 }
 
 type TransferAttemptOutcome =
-  { kind: 'success'; transfer: Transfer } | { kind: 'failure'; status: number; message: string };
+  | { kind: 'success'; transfer: Transfer }
+  | { kind: 'failure'; status: number; message: string };
 
 interface NormalizedTransferRequest {
   sourceWalletId: string;
@@ -114,6 +116,7 @@ export class TransfersService {
 
             let destinationWallet: {
               id: string;
+              userId: string;
               ledgerAccountId: string;
               currency: typeof sourceWallet.currency;
               status: WalletStatus;
@@ -132,6 +135,7 @@ export class TransfersService {
                   wallet: {
                     select: {
                       id: true,
+                      userId: true,
                       ledgerAccountId: true,
                       currency: true,
                       status: true,
@@ -156,6 +160,7 @@ export class TransfersService {
                 where: { id: destinationWalletId },
                 select: {
                   id: true,
+                  userId: true,
                   ledgerAccountId: true,
                   currency: true,
                   status: true,
@@ -228,6 +233,25 @@ export class TransfersService {
                 actorUserId: senderUserId,
                 action: AuditAction.TRANSFER_CREATED,
                 transferId: transfer.id,
+              },
+            });
+
+            await transaction.$queryRaw(
+              Prisma.sql`SELECT set_config('app.outbox_write', 'on', true)`,
+            );
+            await transaction.outboxEvent.create({
+              data: {
+                eventType: OutboxEventType.TRANSFER_COMPLETED,
+                transferId: transfer.id,
+                occurredAt: completedAt,
+                payload: {
+                  senderUserId,
+                  recipientUserId: destinationWallet.userId,
+                  transferId: transfer.id,
+                  reference: transfer.reference,
+                  amountMinor: transfer.amountMinor.toString(),
+                  currency: transfer.currency,
+                },
               },
             });
 
