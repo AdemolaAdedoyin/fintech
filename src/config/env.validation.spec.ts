@@ -32,4 +32,13 @@ describe('validateEnvironment', () => {
       validateEnvironment({ ...baseEnvironment, JWT_ACCESS_SECRET: 'too-short' }),
     ).toThrow('JWT_ACCESS_SECRET');
   });
+
+  it('rejects the documented placeholder JWT secret', () => {
+    expect(() =>
+      validateEnvironment({
+        ...baseEnvironment,
+        JWT_ACCESS_SECRET: 'replace-with-at-least-32-random-characters',
+      }),
+    ).toThrow('private random value');
+  });
 });
