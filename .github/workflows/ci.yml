@@ -10,7 +10,7 @@ on:
       - main
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   quality:
@@ -22,7 +22,7 @@ jobs:
       DATABASE_URL: postgresql://fintech:fintech_test@localhost:5432/fintech_test?schema=public
       JWT_ACCESS_SECRET: ci-only-secret-that-is-at-least-thirty-two-characters-long
       CORS_ORIGIN: http://localhost:3000
-      LOG_LEVEL: silent
+      LOG_LEVEL: info
 
     services:
       postgres:
@@ -47,21 +47,10 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
 
       - name: Install dependencies
-        run: npm install --no-fund
-
-      - name: Commit dependency lockfile
-        if: github.ref == 'refs/heads/modernization/phase-1-foundation' && github.event_name == 'push'
-        run: |
-          if git diff --quiet -- package-lock.json && git ls-files --error-unmatch package-lock.json >/dev/null 2>&1; then
-            exit 0
-          fi
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add package-lock.json
-          git commit -m 'chore: commit dependency lockfile'
-          git push origin HEAD:modernization/phase-1-foundation
+        run: npm ci --no-fund
 
       - name: Audit production dependencies
         run: npm audit --omit=dev --audit-level=high
