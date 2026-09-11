@@ -77,7 +77,15 @@ export class UsersService {
       throw new Error('Initial wallet was not created with the user');
     }
 
-    const { wallets: _wallets, ...user } = created;
+    const user: SafeUser = {
+      id: created.id,
+      email: created.email,
+      firstName: created.firstName,
+      lastName: created.lastName,
+      createdAt: created.createdAt,
+      updatedAt: created.updatedAt,
+    };
+
     return { user, wallet };
   }
 }
