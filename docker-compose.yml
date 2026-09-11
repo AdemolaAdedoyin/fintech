@@ -23,7 +23,7 @@ services:
       NODE_ENV: development
       PORT: 3000
       DATABASE_URL: postgresql://fintech:fintech_dev@postgres:5432/fintech?schema=public
-      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-development-only-secret-change-before-production}
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?JWT_ACCESS_SECRET must be set in .env}
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:3000}
       LOG_LEVEL: ${LOG_LEVEL:-info}
     ports:
