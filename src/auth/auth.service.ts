@@ -77,6 +77,15 @@ export class AuthService {
     };
   }
 
+  async getProfile(userId: string): Promise<SafeUser> {
+    const user = await this.usersService.findSafeById(userId);
+    if (!user) {
+      throw new UnauthorizedException('Authenticated user no longer exists');
+    }
+
+    return user;
+  }
+
   private async issueAccessToken(user: SafeUser) {
     const expiresIn = this.config.getOrThrow<number>('JWT_ACCESS_TTL_SECONDS');
     const payload: AccessTokenPayload = {
