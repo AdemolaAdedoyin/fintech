@@ -15,5 +15,6 @@ export class LoginDto {
 
   @ApiProperty({ example: 'correct-horse-battery-staple' })
   @IsString()
+  @MaxLength(256)
   password!: string;
 }
