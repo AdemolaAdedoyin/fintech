@@ -70,8 +70,6 @@ describe('Idempotency integrity (e2e)', () => {
       }),
     ).rejects.toThrow();
 
-    await expect(
-      prisma.idempotencyRecord.delete({ where: { id: claim.id } }),
-    ).rejects.toThrow();
+    await expect(prisma.idempotencyRecord.delete({ where: { id: claim.id } })).rejects.toThrow();
   });
 });
