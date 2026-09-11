@@ -2,9 +2,9 @@ import { Injectable } from '@nestjs/common';
 import { randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
 
 const KEY_LENGTH = 64;
-const SCRYPT_N = 16_384;
+const SCRYPT_N = 32_768;
 const SCRYPT_R = 8;
-const SCRYPT_P = 1;
+const SCRYPT_P = 3;
 const MAX_MEMORY = 64 * 1024 * 1024;
 const DUMMY_SALT = Buffer.alloc(16, 0x5a);
 
