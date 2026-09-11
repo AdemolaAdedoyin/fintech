@@ -10,7 +10,7 @@ on:
       - main
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   quality:
@@ -21,6 +21,7 @@ jobs:
       PORT: 3000
       DATABASE_URL: postgresql://fintech:fintech_test@localhost:5432/fintech_test?schema=public
       JWT_ACCESS_SECRET: ci-only-secret-that-is-at-least-thirty-two-characters-long
+      JWT_ACCESS_TTL_SECONDS: 900
       CORS_ORIGIN: http://localhost:3000
       LOG_LEVEL: info
 
@@ -49,8 +50,20 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Install dependencies
-        run: npm ci --no-fund
+      - name: Install dependencies and synchronize lockfile
+        run: npm install --no-fund
+
+      - name: Commit dependency lockfile
+        if: github.ref == 'refs/heads/modernization/phase-2-identity-wallets' && github.event_name == 'push'
+        run: |
+          if git diff --quiet -- package-lock.json; then
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add package-lock.json
+          git commit -m 'chore: sync phase two dependency lockfile'
+          git push origin HEAD:modernization/phase-2-identity-wallets
 
       - name: Audit production dependencies
         run: npm audit --omit=dev --audit-level=high
