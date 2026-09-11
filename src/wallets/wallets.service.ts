@@ -1,5 +1,5 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { Currency, Prisma, WalletStatus } from '@prisma/client';
+import { Currency, LedgerAccountKind, Prisma, WalletStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { toWalletResponse } from './wallet.mapper';
 
@@ -9,8 +9,21 @@ export class WalletsService {
 
   async create(userId: string, currency: Currency) {
     try {
-      const wallet = await this.prisma.wallet.create({
-        data: { userId, currency },
+      const wallet = await this.prisma.$transaction(async (transaction) => {
+        const ledgerAccount = await transaction.ledgerAccount.create({
+          data: {
+            kind: LedgerAccountKind.WALLET,
+            currency,
+          },
+        });
+
+        return transaction.wallet.create({
+          data: {
+            userId,
+            ledgerAccountId: ledgerAccount.id,
+            currency,
+          },
+        });
       });
 
       return toWalletResponse(wallet);
