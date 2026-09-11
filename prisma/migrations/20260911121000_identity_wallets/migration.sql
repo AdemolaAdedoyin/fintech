@@ -14,7 +14,8 @@ CREATE TABLE "User" (
     "createdAt" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMPTZ(3) NOT NULL,
 
-    CONSTRAINT "User_pkey" PRIMARY KEY ("id")
+    CONSTRAINT "User_pkey" PRIMARY KEY ("id"),
+    CONSTRAINT "User_email_canonical_check" CHECK ("email" = lower(btrim("email")))
 );
 
 -- CreateTable
@@ -27,7 +28,8 @@ CREATE TABLE "Wallet" (
     "createdAt" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMPTZ(3) NOT NULL,
 
-    CONSTRAINT "Wallet_pkey" PRIMARY KEY ("id")
+    CONSTRAINT "Wallet_pkey" PRIMARY KEY ("id"),
+    CONSTRAINT "Wallet_nonnegative_balance_check" CHECK ("currentBalanceMinor" >= 0)
 );
 
 -- CreateIndex
@@ -40,4 +42,4 @@ CREATE INDEX "Wallet_userId_idx" ON "Wallet"("userId");
 CREATE UNIQUE INDEX "Wallet_userId_currency_key" ON "Wallet"("userId", "currency");
 
 -- AddForeignKey
-ALTER TABLE "Wallet" ADD CONSTRAINT "Wallet_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "Wallet" ADD CONSTRAINT "Wallet_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
