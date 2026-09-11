@@ -49,7 +49,10 @@ CREATE TABLE "LedgerTransaction" (
     "createdAt" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "sealedAt" TIMESTAMPTZ(3),
 
-    CONSTRAINT "LedgerTransaction_pkey" PRIMARY KEY ("id")
+    CONSTRAINT "LedgerTransaction_pkey" PRIMARY KEY ("id"),
+    CONSTRAINT "LedgerTransaction_reference_canonical_check" CHECK (
+      length(btrim("reference")) > 0 AND "reference" = btrim("reference")
+    )
 );
 
 -- CreateTable
@@ -80,13 +83,75 @@ ALTER TABLE "LedgerPosting" ADD CONSTRAINT "LedgerPosting_ledgerTransactionId_fk
 ALTER TABLE "LedgerPosting" ADD CONSTRAINT "LedgerPosting_accountId_fkey"
   FOREIGN KEY ("accountId") REFERENCES "LedgerAccount"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
--- Wallets must point at a wallet-kind ledger account in the same currency.
+-- If this migration encounters a pre-ledger non-zero wallet, preserve it as an auditable opening balance.
+INSERT INTO "LedgerTransaction" (
+  "id", "reference", "currency", "description", "createdAt", "sealedAt"
+)
+SELECT
+  md5('opening-ledger-transaction:' || w."id"::text)::uuid,
+  'migration:opening:' || w."id"::text,
+  w."currency",
+  'Opening balance migrated into ledger',
+  w."createdAt",
+  CURRENT_TIMESTAMP
+FROM "Wallet" w
+WHERE w."currentBalanceMinor" <> 0;
+
+INSERT INTO "LedgerPosting" (
+  "id", "ledgerTransactionId", "accountId", "amountMinor", "createdAt"
+)
+SELECT
+  md5('opening-wallet-posting:' || w."id"::text)::uuid,
+  md5('opening-ledger-transaction:' || w."id"::text)::uuid,
+  w."ledgerAccountId",
+  w."currentBalanceMinor",
+  CURRENT_TIMESTAMP
+FROM "Wallet" w
+WHERE w."currentBalanceMinor" <> 0;
+
+INSERT INTO "LedgerPosting" (
+  "id", "ledgerTransactionId", "accountId", "amountMinor", "createdAt"
+)
+SELECT
+  md5('opening-clearing-posting:' || w."id"::text)::uuid,
+  md5('opening-ledger-transaction:' || w."id"::text)::uuid,
+  CASE w."currency"
+    WHEN 'USD'::"Currency" THEN '00000000-0000-4000-8000-000000000001'::uuid
+    WHEN 'NGN'::"Currency" THEN '00000000-0000-4000-8000-000000000002'::uuid
+  END,
+  -w."currentBalanceMinor",
+  CURRENT_TIMESTAMP
+FROM "Wallet" w
+WHERE w."currentBalanceMinor" <> 0;
+
+UPDATE "LedgerAccount" system_account
+SET
+  "balanceMinor" = -opening.total,
+  "updatedAt" = CURRENT_TIMESTAMP
+FROM (
+  SELECT "currency", SUM("currentBalanceMinor") AS total
+  FROM "Wallet"
+  GROUP BY "currency"
+) opening
+WHERE system_account."kind" = 'SYSTEM'
+  AND system_account."currency" = opening."currency";
+
+-- Wallet identity and accounting linkage are permanent; wallet lifecycle uses status instead of deletion.
 CREATE OR REPLACE FUNCTION "validateWalletLedgerAccount"()
 RETURNS trigger AS $$
 DECLARE
   account_kind "LedgerAccountKind";
   account_currency "Currency";
 BEGIN
+  IF TG_OP = 'UPDATE' AND (
+    NEW."userId" <> OLD."userId"
+    OR NEW."ledgerAccountId" <> OLD."ledgerAccountId"
+    OR NEW."currency" <> OLD."currency"
+  ) THEN
+    RAISE EXCEPTION 'wallet owner, currency, and ledger account are immutable'
+      USING ERRCODE = '23514';
+  END IF;
+
   SELECT "kind", "currency" INTO account_kind, account_currency
   FROM "LedgerAccount"
   WHERE "id" = NEW."ledgerAccountId";
@@ -101,13 +166,28 @@ END;
 $$ LANGUAGE plpgsql;
 
 CREATE TRIGGER "Wallet_validate_ledger_account"
-BEFORE INSERT OR UPDATE OF "ledgerAccountId", "currency" ON "Wallet"
+BEFORE INSERT OR UPDATE OF "userId", "ledgerAccountId", "currency" ON "Wallet"
 FOR EACH ROW EXECUTE FUNCTION "validateWalletLedgerAccount"();
+
+CREATE OR REPLACE FUNCTION "preventWalletDelete"()
+RETURNS trigger AS $$
+BEGIN
+  RAISE EXCEPTION 'wallets cannot be deleted; close them instead' USING ERRCODE = '23514';
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER "Wallet_prevent_delete"
+BEFORE DELETE ON "Wallet"
+FOR EACH ROW EXECUTE FUNCTION "preventWalletDelete"();
 
 -- Account identity is immutable; only its balance snapshot and timestamp may change.
 CREATE OR REPLACE FUNCTION "protectLedgerAccountIdentity"()
 RETURNS trigger AS $$
 BEGIN
+  IF TG_OP = 'DELETE' THEN
+    RAISE EXCEPTION 'ledger accounts are immutable' USING ERRCODE = '23514';
+  END IF;
+
   IF NEW."id" <> OLD."id"
     OR NEW."kind" <> OLD."kind"
     OR NEW."currency" <> OLD."currency"
@@ -127,10 +207,10 @@ END;
 $$ LANGUAGE plpgsql;
 
 CREATE TRIGGER "LedgerAccount_protect_identity"
-BEFORE UPDATE ON "LedgerAccount"
+BEFORE UPDATE OR DELETE ON "LedgerAccount"
 FOR EACH ROW EXECUTE FUNCTION "protectLedgerAccountIdentity"();
 
--- The public wallet balance is a snapshot and may only move with the ledger account balance.
+-- The public wallet balance is a derived read snapshot and may not be edited directly.
 CREATE OR REPLACE FUNCTION "protectWalletBalance"()
 RETURNS trigger AS $$
 BEGIN
@@ -147,6 +227,31 @@ $$ LANGUAGE plpgsql;
 CREATE TRIGGER "Wallet_protect_balance"
 BEFORE UPDATE OF "currentBalanceMinor" ON "Wallet"
 FOR EACH ROW EXECUTE FUNCTION "protectWalletBalance"();
+
+-- Keep product-wallet snapshots synchronized from their canonical ledger account balance.
+CREATE OR REPLACE FUNCTION "syncWalletBalanceFromLedgerAccount"()
+RETURNS trigger AS $$
+BEGIN
+  IF NEW."kind" = 'WALLET' AND NEW."balanceMinor" IS DISTINCT FROM OLD."balanceMinor" THEN
+    UPDATE "Wallet"
+    SET
+      "currentBalanceMinor" = NEW."balanceMinor",
+      "updatedAt" = CURRENT_TIMESTAMP
+    WHERE "ledgerAccountId" = NEW."id";
+
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'wallet ledger account is missing its product wallet'
+        USING ERRCODE = '23514';
+    END IF;
+  END IF;
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER "LedgerAccount_sync_wallet_balance"
+AFTER UPDATE OF "balanceMinor" ON "LedgerAccount"
+FOR EACH ROW EXECUTE FUNCTION "syncWalletBalanceFromLedgerAccount"();
 
 -- Ledger transactions start open, accept postings, then may be sealed exactly once.
 CREATE OR REPLACE FUNCTION "protectLedgerTransaction"()
@@ -185,7 +290,7 @@ FOR EACH ROW EXECUTE FUNCTION "protectLedgerTransaction"();
 CREATE OR REPLACE FUNCTION "protectLedgerPosting"()
 RETURNS trigger AS $$
 DECLARE
-  transaction_sealed_at TIMESTAMPTZ(3);
+  transaction_sealed_at TIMESTAMPTZ;
 BEGIN
   IF TG_OP = 'INSERT' THEN
     SELECT "sealedAt" INTO transaction_sealed_at
@@ -212,7 +317,7 @@ CREATE OR REPLACE FUNCTION "validateLedgerTransactionAtCommit"()
 RETURNS trigger AS $$
 DECLARE
   current_currency "Currency";
-  current_sealed_at TIMESTAMPTZ(3);
+  current_sealed_at TIMESTAMPTZ;
   posting_count BIGINT;
   posting_total NUMERIC;
   mismatch_count BIGINT;
