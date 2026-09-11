@@ -13,7 +13,7 @@ describe('Idempotency integrity (e2e)', () => {
     await prisma.$disconnect();
   });
 
-  it('requires in-progress creation and makes terminal records immutable', async () => {
+  it('makes terminal idempotency records immutable', async () => {
     const user = await prisma.user.create({
       data: {
         email: `idempotency-${randomUUID()}@example.com`,
