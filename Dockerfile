@@ -2,8 +2,8 @@ FROM node:22-alpine AS build
 
 WORKDIR /app
 
-COPY package.json ./
-RUN npm install --no-audit --no-fund
+COPY package.json package-lock.json ./
+RUN npm ci --no-audit --no-fund
 
 COPY prisma ./prisma
 RUN npx prisma generate
@@ -24,7 +24,7 @@ RUN addgroup -S nodejs && adduser -S nestjs -G nodejs
 COPY --from=build --chown=nestjs:nodejs /app/node_modules ./node_modules
 COPY --from=build --chown=nestjs:nodejs /app/dist ./dist
 COPY --from=build --chown=nestjs:nodejs /app/prisma ./prisma
-COPY --chown=nestjs:nodejs package.json ./
+COPY --chown=nestjs:nodejs package.json package-lock.json ./
 
 USER nestjs
 EXPOSE 3000
