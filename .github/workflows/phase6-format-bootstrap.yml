@@ -1,0 +1,44 @@
+name: Phase 6 formatting bootstrap
+
+on:
+  push:
+    branches:
+      - modernization/phase-6-queues-outbox
+    paths:
+      - '.github/workflows/phase6-format-bootstrap.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          ref: modernization/phase-6-queues-outbox
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-fund
+
+      - name: Format sources
+        run: npm run format
+
+      - name: Commit formatted sources
+        run: |
+          if git diff --quiet -- src test; then
+            echo 'No formatting changes to commit.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src test
+          git commit -m 'style: format phase 6 sources'
+          git push origin HEAD:modernization/phase-6-queues-outbox
