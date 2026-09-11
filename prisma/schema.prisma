@@ -6,3 +6,39 @@ datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
+
+enum Currency {
+  USD
+  NGN
+}
+
+enum WalletStatus {
+  ACTIVE
+  FROZEN
+  CLOSED
+}
+
+model User {
+  id           String   @id @default(uuid()) @db.Uuid
+  email        String   @unique @db.VarChar(320)
+  passwordHash String   @db.VarChar(255)
+  firstName    String   @db.VarChar(80)
+  lastName     String   @db.VarChar(80)
+  createdAt    DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt    DateTime @updatedAt @db.Timestamptz(3)
+  wallets      Wallet[]
+}
+
+model Wallet {
+  id                  String       @id @default(uuid()) @db.Uuid
+  userId              String       @db.Uuid
+  currency            Currency
+  status              WalletStatus @default(ACTIVE)
+  currentBalanceMinor BigInt       @default(0)
+  createdAt           DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt           DateTime     @updatedAt @db.Timestamptz(3)
+  user                User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, currency])
+  @@index([userId])
+}
