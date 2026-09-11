@@ -1,16 +1,13 @@
-/node_modules
 node_modules/
-/node_modules/
-# Elastic Beanstalk Files
-.elasticbeanstalk/*
-!.elasticbeanstalk/*.cfg.yml
-!.elasticbeanstalk/*.global.yml
-.idea/
-.DS_Store
-newrelic_agent.log
-.nyc_output/
+dist/
 coverage/
-npm-debug.log
-package-lock.json
-ecosystem.config.js
-.ecosystem.config.js
+.env
+.env.*
+!.env.example
+.DS_Store
+.idea/
+.vscode/
+*.log
+npm-debug.log*
+.nyc_output/
+.prisma/

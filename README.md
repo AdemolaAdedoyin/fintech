@@ -1,64 +1,113 @@
-# FINTECH
-A mini fintech  API that allows users register, authenticate, payout and fund their NGN wallet.
+# Fintech Transaction Platform
 
-# Built With
+A production-style backend project for wallets, transfers, ledger accounting, reversals, and payment infrastructure.
 
-The system was built using Nodejs, while consuming external Apis, e.g Flutterwaves Api, Paystacks Api, Nodemailer api
+This repository is being rebuilt from the original JavaScript/MySQL fintech API and selected concepts from the experimental `riseBeta` repository. The modernization is intentionally phased so each layer can be reviewed before the next one is added.
 
-# Getting Started
+## Modernization status
 
-## Prerequisites
+### Phase 1 — secure platform foundation
 
-Your system must have npm and node installed, and this can be done on the terminal with 
+Current branch scope:
 
-```
-- npm install npm@latest -g
-```
+- NestJS + TypeScript application foundation
+- PostgreSQL + Prisma
+- deterministic Docker and Docker Compose setup
+- fail-fast environment validation
+- structured JSON logging with sensitive-field redaction
+- Helmet security headers and explicit CORS configuration
+- Swagger/OpenAPI documentation
+- liveness and PostgreSQL readiness endpoints
+- graceful application shutdown hooks
+- strict linting, formatting, type checking, unit tests, build checks, dependency audit, container validation, and CI smoke test
 
-## Installation
+Domain behavior such as authentication, wallets, ledger postings, transfers, idempotency, and reversals is intentionally **not implemented yet**. Those are added in later reviewed phases.
 
-```
-- Clone the repo https://github.com/AdemolaAdedoyin/fintech.git
-- Install npm packages, npm install
-- This is a locally hosted api, so you have to have mySQL database server running on your system. Either through xampp or installed using brew.
-- A database to use must exist, and the name of this database will be passed when trying to start the server.
-- You need to have an account on Moneywave, to get test api and secret keys that will be used on the system. https://moneywave.azurewebsites.net/#/login
-- You need to have an account on paystack, to get test public key that will be used on the system. https://dashboard.paystack.com/#/login
-```
+## Planned phases
 
-## Usage
+1. **Foundation** — NestJS, TypeScript, PostgreSQL, Prisma, Docker, configuration, logging, Swagger, health checks, CI.
+2. **Identity and wallets** — registration/login, ownership authorization, wallet lifecycle, minor-unit money representation.
+3. **Ledger core** — immutable ledger transactions/postings, balance invariants, atomic database transactions.
+4. **Transfers** — internal transfers, idempotency, concurrency protection, beneficiaries.
+5. **Reversals and audit** — compensating ledger entries, reversal rules, audit history.
+6. **Async infrastructure** — Redis/BullMQ, outbox processing, notifications, retryable webhook delivery.
+7. **Provider abstraction** — mock provider first, optional tokenized/hosted Paystack integration with verified webhooks.
+8. **Production polish** — deployment, observability, expanded security testing, architecture documentation.
 
-Configs to be passed when trying to start the server
+After the useful RiseBeta concepts are represented safely in this project, `riseBeta` will be archived as an earlier experimental iteration.
 
-```
-- MW_API_KEY="YOUR MONEYWAVE API KEY"
-- MW_SECRET="YOUR MONEYWAVE SECRET KEY"
-- MW_WALLET_PASSWORD="YOUR MONEYWAVE WALLET PASSWORD"
-- PAYSTACK_PUBLIC_KEY="YOUR PAYSTACK PUBLIC KEY"
-- ACCOUNT_EMAIL="YOUR EMAIL TO USE FOR NOTIFICATIONS"
-- ACCOUNT_PASSWORD="YOUR EMAIL PASSWORD"
-- NODE_ENV="production"
-```
-Note: `NODE_ENV is the only optional config needed, and its used in the notification service`
+## Local setup
 
+### Requirements
 
-To start the server, run this on your terminal
-```
-MW_API_KEY="YOUR MONEYWAVE API KEY" MW_SECRET="YOUR MONEYWAVE SECRET KEY" MW_WALLET_PASSWORD="YOUR MONEYWAVE WALLET PASSWORD" PAYSTACK_PUBLIC_KEY="YOUR PAYSTACK PUBLIC KEY" ACCOUNT_EMAIL="YOUR EMAIL TO USE FOR NOTIFICATIONS" ACCOUNT_PASSWORD="YOUR EMAIL PASSWORD" NODE_ENV=production npm start
-```
+- Node.js 22+
+- npm 10+
+- Docker Desktop (recommended)
 
-`Note: Less secure apps has to be enabled on the gmail acccount you want to use;`
+### Environment
 
-To run the test script
-```
-MW_API_KEY="YOUR MONEYWAVE API KEY" MW_SECRET="YOUR MONEYWAVE SECRET KEY" MW_WALLET_PASSWORD="YOUR MONEYWAVE WALLET PASSWORD" PAYSTACK_PUBLIC_KEY="YOUR PAYSTACK PUBLIC KEY" ACCOUNT_EMAIL="YOUR EMAIL TO USE FOR NOTIFICATIONS" ACCOUNT_PASSWORD="YOUR EMAIL PASSWORD" NODE_ENV=production npm run test
+Copy the example file:
+
+```bash
+cp .env.example .env
 ```
 
-# Doc
+Replace `JWT_ACCESS_SECRET` with a private random value of at least 32 characters. The application rejects both weak secrets and the documented example placeholder.
 
-Documentaion for the api can be found here, [doc](https://documenter.getpostman.com/view/1676833/U16oq44V)
+### Run with Docker Compose
 
+```bash
+docker compose up --build
+```
 
-# Contact 
+This starts:
 
-Kindly reach out if any issue is encountered or token and keys are needed, adedoyinademola397@gmail.com
+- API: `http://localhost:3000`
+- Swagger UI: `http://localhost:3000/docs`
+- Liveness: `http://localhost:3000/api/v1/health/live`
+- Readiness: `http://localhost:3000/api/v1/health/ready`
+- PostgreSQL: `localhost:5432` (bound to the local host only)
+
+Both PostgreSQL and the API have container health checks. The API waits for PostgreSQL to be healthy before starting.
+
+### Run the API locally with PostgreSQL in Docker
+
+```bash
+docker compose up postgres -d
+npm ci
+npm run prisma:generate
+npm run start:dev
+```
+
+## Quality checks
+
+```bash
+npm run format:check
+npm run lint
+npm run typecheck
+npm test
+npm run prisma:validate
+npm run build
+```
+
+GitHub Actions also performs a production dependency audit, validates the Compose definition, builds the production Docker image from the committed lockfile, and starts the compiled API against a real PostgreSQL service to verify the readiness endpoint.
+
+## Security baseline
+
+The rebuilt service follows a few rules from the beginning:
+
+- required secrets fail validation instead of falling back to committed defaults;
+- the documented example JWT secret is explicitly rejected;
+- authorization headers, cookies, passwords, and token-like fields are redacted from structured logs;
+- the API applies secure HTTP headers through Helmet;
+- CORS is configured from an explicit allowlist;
+- request validation is strict and rejects unknown fields;
+- raw card PAN/CVV/PIN handling will not be part of the rebuilt payment flow;
+- user-controlled values will not be concatenated into SQL;
+- the production container runs as a non-root user and installs dependencies from the committed lockfile.
+
+## Historical context
+
+The original project provided user registration, authentication, wallet funding, payouts, beneficiaries, and external payment-provider integrations. RiseBeta later experimented with transaction history, reversals, USD wallets, plans, and portfolio-style calculations.
+
+The rebuild keeps the useful product ideas while replacing the legacy runtime, floating-point money handling, direct balance mutation, tightly coupled payment-provider logic, and outdated security patterns.
