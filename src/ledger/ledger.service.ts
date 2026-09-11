@@ -144,13 +144,6 @@ export class LedgerService {
               where: { id: account.id },
               data: { balanceMinor: nextBalance },
             });
-
-            if (account.wallet) {
-              await transaction.wallet.update({
-                where: { id: account.wallet.id },
-                data: { currentBalanceMinor: nextBalance },
-              });
-            }
           }
 
           const sealedAt = new Date();
