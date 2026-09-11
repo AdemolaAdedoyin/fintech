@@ -33,6 +33,7 @@ jobs:
 
       - name: Commit formatted sources
         run: |
+          # Keep this helper deterministic; it is deleted before the Phase 6 PR.
           if git diff --quiet -- src test; then
             echo 'No formatting changes to commit.'
             exit 0
