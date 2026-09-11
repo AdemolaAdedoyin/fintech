@@ -10,6 +10,7 @@ import {
 import {
   AuditAction,
   IdempotencyStatus,
+  OutboxEventType,
   Prisma,
   TransferStatus,
   type TransferReversal,
@@ -110,6 +111,7 @@ export class ReversalsService {
                 },
                 destinationWallet: {
                   select: {
+                    userId: true,
                     ledgerAccountId: true,
                   },
                 },
@@ -172,6 +174,26 @@ export class ReversalsService {
                 action: AuditAction.TRANSFER_REVERSED,
                 transferId: transfer.id,
                 reversalId: reversal.id,
+              },
+            });
+
+            await transaction.$queryRaw(
+              Prisma.sql`SELECT set_config('app.outbox_write', 'on', true)`,
+            );
+            await transaction.outboxEvent.create({
+              data: {
+                eventType: OutboxEventType.TRANSFER_REVERSED,
+                reversalId: reversal.id,
+                occurredAt: reversal.createdAt,
+                payload: {
+                  senderUserId: actorUserId,
+                  recipientUserId: transfer.destinationWallet.userId,
+                  transferId: transfer.id,
+                  reversalId: reversal.id,
+                  reference: transfer.reference,
+                  amountMinor: transfer.amountMinor.toString(),
+                  currency: transfer.currency,
+                },
               },
             });
 
