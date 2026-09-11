@@ -11,7 +11,7 @@
   "scripts": {
     "build": "nest build",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
-    "format:check": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\" && git diff -- src test && git diff --exit-code -- src test",
+    "format:check": "prettier --check \"src/**/*.ts\" \"test/**/*.ts\"",
     "lint": "eslint \"src/**/*.ts\" \"test/**/*.ts\" --max-warnings=0",
     "start": "nest start",
     "dev:bootstrap": "docker compose stop api && docker compose up -d --wait postgres && npm run prisma:generate && npm run db:migrate:deploy",
