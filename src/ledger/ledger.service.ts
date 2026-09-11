@@ -14,7 +14,11 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { externalClearingAccountKey } from './ledger.constants';
-import { normalizeLedgerTransactionInput, type LedgerTransactionInput } from './ledger.invariants';
+import {
+  isSupportedMinorUnitValue,
+  normalizeLedgerTransactionInput,
+  type LedgerTransactionInput,
+} from './ledger.invariants';
 
 @Injectable()
 export class LedgerService {
@@ -104,12 +108,20 @@ export class LedgerService {
             }
 
             const nextBalance = account.balanceMinor + posting.amountMinor;
+            if (!isSupportedMinorUnitValue(nextBalance)) {
+              throw new ConflictException('Ledger posting would exceed the supported BIGINT range');
+            }
+
             if (!account.allowNegative && nextBalance < 0n) {
               throw new ConflictException('Insufficient funds for ledger posting');
             }
 
             nextBalances.set(account.id, nextBalance);
           }
+
+          await transaction.$queryRaw(
+            Prisma.sql`SELECT set_config('app.ledger_write', 'on', true)`,
+          );
 
           const ledgerTransaction = await transaction.ledgerTransaction.create({
             data: {
@@ -126,10 +138,6 @@ export class LedgerService {
               amountMinor: posting.amountMinor,
             })),
           });
-
-          await transaction.$queryRaw(
-            Prisma.sql`SELECT set_config('app.ledger_write', 'on', true)`,
-          );
 
           for (const account of accounts) {
             const nextBalance = nextBalances.get(account.id);
