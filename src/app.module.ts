@@ -4,6 +4,7 @@ import { LoggerModule } from 'nestjs-pino';
 import { AuthModule } from './auth/auth.module';
 import { validateEnvironment } from './config/env.validation';
 import { HealthModule } from './health/health.module';
+import { LedgerModule } from './ledger/ledger.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { WalletsModule } from './wallets/wallets.module';
 
@@ -35,6 +36,7 @@ import { WalletsModule } from './wallets/wallets.module';
     HealthModule,
     AuthModule,
     WalletsModule,
+    LedgerModule,
   ],
 })
 export class AppModule {}
