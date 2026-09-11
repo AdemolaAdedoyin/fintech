@@ -24,6 +24,7 @@ import { WalletsModule } from './wallets/wallets.module';
           paths: [
             'req.headers.authorization',
             'req.headers.cookie',
+            'req.headers.idempotency-key',
             'req.body.password',
             'req.body.token',
             'req.body.accessToken',
