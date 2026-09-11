@@ -6,6 +6,7 @@ describe('validateEnvironment', () => {
     PORT: '3000',
     DATABASE_URL: 'postgresql://fintech:fintech@localhost:5432/fintech?schema=public',
     JWT_ACCESS_SECRET: 'a-secure-test-secret-that-is-longer-than-32-characters',
+    JWT_ACCESS_TTL_SECONDS: '900',
     CORS_ORIGIN: 'http://localhost:3000',
     LOG_LEVEL: 'info',
   };
@@ -15,6 +16,7 @@ describe('validateEnvironment', () => {
       expect.objectContaining({
         NODE_ENV: 'test',
         PORT: 3000,
+        JWT_ACCESS_TTL_SECONDS: 900,
         LOG_LEVEL: 'info',
       }),
     );
@@ -40,5 +42,11 @@ describe('validateEnvironment', () => {
         JWT_ACCESS_SECRET: 'replace-with-at-least-32-random-characters',
       }),
     ).toThrow('private random value');
+  });
+
+  it('rejects access-token lifetimes outside the allowed range', () => {
+    expect(() =>
+      validateEnvironment({ ...baseEnvironment, JWT_ACCESS_TTL_SECONDS: '30' }),
+    ).toThrow('JWT_ACCESS_TTL_SECONDS');
   });
 });
