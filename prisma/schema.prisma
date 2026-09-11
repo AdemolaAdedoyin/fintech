@@ -34,6 +34,11 @@ enum IdempotencyStatus {
   FAILED
 }
 
+enum AuditAction {
+  TRANSFER_CREATED
+  TRANSFER_REVERSED
+}
+
 model User {
   id                 String              @id @default(uuid()) @db.Uuid
   email              String              @unique @db.VarChar(320)
@@ -46,6 +51,8 @@ model User {
   sentTransfers      Transfer[]          @relation("TransferSender")
   beneficiaries      Beneficiary[]
   idempotencyRecords IdempotencyRecord[]
+  reversals          TransferReversal[]  @relation("ReversalActor")
+  auditLogs          AuditLog[]          @relation("AuditActor")
 }
 
 model Wallet {
@@ -83,14 +90,15 @@ model LedgerAccount {
 }
 
 model LedgerTransaction {
-  id          String          @id @default(uuid()) @db.Uuid
-  reference   String          @unique @db.VarChar(120)
+  id          String            @id @default(uuid()) @db.Uuid
+  reference   String            @unique @db.VarChar(120)
   currency    Currency
-  description String?         @db.VarChar(255)
-  createdAt   DateTime        @default(now()) @db.Timestamptz(3)
-  sealedAt    DateTime?       @db.Timestamptz(3)
+  description String?           @db.VarChar(255)
+  createdAt   DateTime          @default(now()) @db.Timestamptz(3)
+  sealedAt    DateTime?         @db.Timestamptz(3)
   postings    LedgerPosting[]
   transfer    Transfer?
+  reversal    TransferReversal?
 }
 
 model LedgerPosting {
@@ -126,10 +134,31 @@ model Transfer {
   beneficiary         Beneficiary?      @relation(fields: [beneficiaryId], references: [id], onDelete: Restrict)
   ledgerTransaction   LedgerTransaction @relation(fields: [ledgerTransactionId], references: [id], onDelete: Restrict)
   idempotencyRecord   IdempotencyRecord?
+  reversal            TransferReversal?
+  auditLogs           AuditLog[]
 
   @@index([senderUserId, createdAt])
   @@index([sourceWalletId, createdAt])
   @@index([destinationWalletId, createdAt])
+}
+
+model TransferReversal {
+  id                  String            @id @default(uuid()) @db.Uuid
+  reference           String            @unique @db.VarChar(120)
+  transferId          String            @unique @db.Uuid
+  actorUserId         String            @db.Uuid
+  ledgerTransactionId String            @unique @db.Uuid
+  currency            Currency
+  amountMinor         BigInt
+  reason              String?           @db.VarChar(255)
+  createdAt           DateTime          @default(now()) @db.Timestamptz(3)
+  transfer            Transfer          @relation(fields: [transferId], references: [id], onDelete: Restrict)
+  actor               User              @relation("ReversalActor", fields: [actorUserId], references: [id], onDelete: Restrict)
+  ledgerTransaction   LedgerTransaction @relation(fields: [ledgerTransactionId], references: [id], onDelete: Restrict)
+  idempotencyRecord   IdempotencyRecord?
+  auditLog            AuditLog?
+
+  @@index([actorUserId, createdAt])
 }
 
 model Beneficiary {
@@ -158,11 +187,28 @@ model IdempotencyRecord {
   responseStatus Int?
   errorMessage   String?           @db.VarChar(255)
   transferId     String?           @unique @db.Uuid
+  reversalId     String?           @unique @db.Uuid
   createdAt      DateTime          @default(now()) @db.Timestamptz(3)
   updatedAt      DateTime          @updatedAt @db.Timestamptz(3)
   user           User              @relation(fields: [userId], references: [id], onDelete: Cascade)
   transfer       Transfer?         @relation(fields: [transferId], references: [id], onDelete: Restrict)
+  reversal       TransferReversal? @relation(fields: [reversalId], references: [id], onDelete: Restrict)
 
   @@unique([userId, scope, key])
   @@index([userId, createdAt])
+}
+
+model AuditLog {
+  id          String            @id @default(uuid()) @db.Uuid
+  actorUserId String            @db.Uuid
+  action      AuditAction
+  transferId  String            @db.Uuid
+  reversalId  String?           @unique @db.Uuid
+  createdAt   DateTime          @default(now()) @db.Timestamptz(3)
+  actor       User              @relation("AuditActor", fields: [actorUserId], references: [id], onDelete: Restrict)
+  transfer    Transfer          @relation(fields: [transferId], references: [id], onDelete: Restrict)
+  reversal    TransferReversal? @relation(fields: [reversalId], references: [id], onDelete: Restrict)
+
+  @@unique([action, transferId])
+  @@index([actorUserId, createdAt])
 }
