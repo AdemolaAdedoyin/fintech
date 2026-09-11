@@ -12,6 +12,7 @@ const environmentSchema = z.object({
     .refine((secret) => secret !== exampleJwtSecret, {
       message: 'JWT_ACCESS_SECRET must be replaced with a private random value',
     }),
+  JWT_ACCESS_TTL_SECONDS: z.coerce.number().int().min(60).max(86400).default(900),
   CORS_ORIGIN: z.string().min(1).default('http://localhost:3000'),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
 });
