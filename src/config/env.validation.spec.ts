@@ -45,8 +45,8 @@ describe('validateEnvironment', () => {
   });
 
   it('rejects access-token lifetimes outside the allowed range', () => {
-    expect(() =>
-      validateEnvironment({ ...baseEnvironment, JWT_ACCESS_TTL_SECONDS: '30' }),
-    ).toThrow('JWT_ACCESS_TTL_SECONDS');
+    expect(() => validateEnvironment({ ...baseEnvironment, JWT_ACCESS_TTL_SECONDS: '30' })).toThrow(
+      'JWT_ACCESS_TTL_SECONDS',
+    );
   });
 });
