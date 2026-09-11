@@ -39,6 +39,18 @@ enum AuditAction {
   TRANSFER_REVERSED
 }
 
+enum OutboxEventType {
+  TRANSFER_COMPLETED
+  TRANSFER_REVERSED
+}
+
+enum WebhookDeliveryStatus {
+  PENDING
+  PROCESSING
+  SUCCEEDED
+  FAILED
+}
+
 model User {
   id                 String              @id @default(uuid()) @db.Uuid
   email              String              @unique @db.VarChar(320)
@@ -53,6 +65,8 @@ model User {
   idempotencyRecords IdempotencyRecord[]
   reversals          TransferReversal[]  @relation("ReversalActor")
   auditLogs          AuditLog[]          @relation("AuditActor")
+  notifications      Notification[]
+  webhookEndpoints   WebhookEndpoint[]
 }
 
 model Wallet {
@@ -136,6 +150,7 @@ model Transfer {
   idempotencyRecord   IdempotencyRecord?
   reversal            TransferReversal?
   auditLogs           AuditLog[]
+  outboxEvent         OutboxEvent?       @relation("TransferOutboxEvent")
 
   @@index([senderUserId, createdAt])
   @@index([sourceWalletId, createdAt])
@@ -157,6 +172,7 @@ model TransferReversal {
   ledgerTransaction   LedgerTransaction @relation(fields: [ledgerTransactionId], references: [id], onDelete: Restrict)
   idempotencyRecord   IdempotencyRecord?
   auditLog            AuditLog?
+  outboxEvent         OutboxEvent?       @relation("ReversalOutboxEvent")
 
   @@index([actorUserId, createdAt])
 }
@@ -211,4 +227,74 @@ model AuditLog {
 
   @@unique([action, transferId])
   @@index([actorUserId, createdAt])
+}
+
+model OutboxEvent {
+  id              String          @id @default(uuid()) @db.Uuid
+  eventType       OutboxEventType
+  transferId      String?         @unique @db.Uuid
+  reversalId      String?         @unique @db.Uuid
+  payload         Json
+  occurredAt      DateTime        @default(now()) @db.Timestamptz(3)
+  publishedAt     DateTime?       @db.Timestamptz(3)
+  publishAttempts Int             @default(0)
+  nextPublishAt   DateTime        @default(now()) @db.Timestamptz(3)
+  lastError       String?         @db.VarChar(500)
+  createdAt       DateTime        @default(now()) @db.Timestamptz(3)
+  transfer        Transfer?       @relation("TransferOutboxEvent", fields: [transferId], references: [id], onDelete: Restrict)
+  reversal        TransferReversal? @relation("ReversalOutboxEvent", fields: [reversalId], references: [id], onDelete: Restrict)
+  notifications   Notification[]
+  webhookDeliveries WebhookDelivery[]
+
+  @@index([publishedAt, nextPublishAt, createdAt])
+}
+
+model Notification {
+  id            String          @id @default(uuid()) @db.Uuid
+  userId        String          @db.Uuid
+  outboxEventId String          @db.Uuid
+  eventType     OutboxEventType
+  title         String          @db.VarChar(120)
+  body          String          @db.VarChar(255)
+  createdAt     DateTime        @default(now()) @db.Timestamptz(3)
+  readAt        DateTime?       @db.Timestamptz(3)
+  user          User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  outboxEvent   OutboxEvent     @relation(fields: [outboxEventId], references: [id], onDelete: Restrict)
+
+  @@unique([userId, outboxEventId])
+  @@index([userId, createdAt])
+}
+
+model WebhookEndpoint {
+  id          String            @id @default(uuid()) @db.Uuid
+  userId      String            @db.Uuid
+  url         String            @db.VarChar(2048)
+  description String?           @db.VarChar(120)
+  enabled     Boolean           @default(true)
+  createdAt   DateTime          @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime          @updatedAt @db.Timestamptz(3)
+  user        User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deliveries  WebhookDelivery[]
+
+  @@index([userId, createdAt])
+}
+
+model WebhookDelivery {
+  id             String                @id @default(uuid()) @db.Uuid
+  endpointId     String                @db.Uuid
+  outboxEventId  String                @db.Uuid
+  status         WebhookDeliveryStatus @default(PENDING)
+  attemptCount   Int                   @default(0)
+  queuedAt       DateTime?             @db.Timestamptz(3)
+  lastAttemptAt  DateTime?             @db.Timestamptz(3)
+  responseStatus Int?
+  lastError      String?               @db.VarChar(500)
+  deliveredAt    DateTime?             @db.Timestamptz(3)
+  createdAt      DateTime              @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime              @updatedAt @db.Timestamptz(3)
+  endpoint       WebhookEndpoint       @relation(fields: [endpointId], references: [id], onDelete: Restrict)
+  outboxEvent    OutboxEvent           @relation(fields: [outboxEventId], references: [id], onDelete: Restrict)
+
+  @@unique([endpointId, outboxEventId])
+  @@index([status, queuedAt, createdAt])
 }
