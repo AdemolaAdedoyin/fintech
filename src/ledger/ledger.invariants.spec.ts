@@ -1,6 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 import { Currency } from '@prisma/client';
-import { normalizeLedgerTransactionInput } from './ledger.invariants';
+import { MAX_MINOR_UNITS, normalizeLedgerTransactionInput } from './ledger.invariants';
 
 const ACCOUNT_A = '11111111-1111-4111-8111-111111111111';
 const ACCOUNT_B = '22222222-2222-4222-8222-222222222222';
@@ -55,5 +55,15 @@ describe('ledger transaction invariants', () => {
     const oversized = validInput();
     oversized.reference = 'x'.repeat(121);
     expect(() => normalizeLedgerTransactionInput(oversized)).toThrow(BadRequestException);
+  });
+
+  it('rejects postings outside the signed PostgreSQL BIGINT range', () => {
+    const input = validInput();
+    input.postings = [
+      { accountId: ACCOUNT_A, amountMinor: -(MAX_MINOR_UNITS + 1n) },
+      { accountId: ACCOUNT_B, amountMinor: MAX_MINOR_UNITS + 1n },
+    ];
+
+    expect(() => normalizeLedgerTransactionInput(input)).toThrow(BadRequestException);
   });
 });
