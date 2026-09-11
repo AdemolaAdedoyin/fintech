@@ -63,17 +63,32 @@ jobs:
       - name: Smoke test PostgreSQL readiness endpoint
         shell: bash
         run: |
-          npm run start:prod > /tmp/fintech-api.log 2>&1 &
+          test -f dist/main.js
+          node dist/main.js > /tmp/fintech-api.log 2>&1 &
           APP_PID=$!
-          trap 'kill $APP_PID' EXIT
+
+          cleanup() {
+            if kill -0 "$APP_PID" 2>/dev/null; then
+              kill "$APP_PID"
+            fi
+          }
+          trap cleanup EXIT
 
           for attempt in {1..20}; do
             if curl --fail --silent http://localhost:3000/api/v1/health/ready > /tmp/health.json; then
               cat /tmp/health.json
               exit 0
             fi
+
+            if ! kill -0 "$APP_PID" 2>/dev/null; then
+              echo 'Application exited before readiness check succeeded.'
+              cat /tmp/fintech-api.log
+              exit 1
+            fi
+
             sleep 1
           done
 
+          echo 'Readiness endpoint did not become healthy in time.'
           cat /tmp/fintech-api.log
           exit 1
