@@ -20,8 +20,11 @@ jobs:
       NODE_ENV: test
       PORT: 3000
       DATABASE_URL: postgresql://fintech:fintech_test@localhost:5432/fintech_test?schema=public
+      REDIS_URL: redis://localhost:6379
       JWT_ACCESS_SECRET: ci-only-secret-that-is-at-least-thirty-two-characters-long
       JWT_ACCESS_TTL_SECONDS: 900
+      WEBHOOK_SIGNING_MASTER_SECRET: ci-only-webhook-signing-master-secret-that-is-long-enough
+      WEBHOOK_REQUEST_TIMEOUT_MS: 1000
       CORS_ORIGIN: http://localhost:3000
       LOG_LEVEL: info
 
@@ -36,6 +39,16 @@ jobs:
           - 5432:5432
         options: >-
           --health-cmd "pg_isready -U fintech -d fintech_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+      redis:
+        image: redis:7.4-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
@@ -74,7 +87,7 @@ jobs:
           docker build --target migrate --tag fintech-migrate:ci .
           docker build --tag fintech-transaction-platform:ci .
 
-      - name: Smoke test PostgreSQL readiness endpoint
+      - name: Smoke test database and async health endpoints
         shell: bash
         run: |
           test -f dist/main.js
@@ -89,13 +102,15 @@ jobs:
           trap cleanup EXIT
 
           for attempt in {1..20}; do
-            if curl --fail --silent http://localhost:3000/api/v1/health/ready > /tmp/health.json; then
+            if curl --fail --silent http://localhost:3000/api/v1/health/ready > /tmp/health.json \
+              && curl --fail --silent http://localhost:3000/api/v1/health/async > /tmp/async-health.json; then
               cat /tmp/health.json
+              cat /tmp/async-health.json
               exit 0
             fi
 
             if ! kill -0 "$APP_PID" 2>/dev/null; then
-              echo 'Application exited before readiness check succeeded.'
+              echo 'Application exited before readiness checks succeeded.'
               cat /tmp/fintech-api.log
               exit 1
             fi
@@ -103,6 +118,6 @@ jobs:
             sleep 1
           done
 
-          echo 'Readiness endpoint did not become healthy in time.'
+          echo 'Readiness endpoints did not become healthy in time.'
           cat /tmp/fintech-api.log
           exit 1
