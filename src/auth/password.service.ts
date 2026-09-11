@@ -6,6 +6,7 @@ const SCRYPT_N = 16_384;
 const SCRYPT_R = 8;
 const SCRYPT_P = 1;
 const MAX_MEMORY = 64 * 1024 * 1024;
+const DUMMY_SALT = Buffer.alloc(16, 0x5a);
 
 @Injectable()
 export class PasswordService {
@@ -21,6 +22,15 @@ export class PasswordService {
       salt.toString('base64url'),
       derivedKey.toString('base64url'),
     ].join('$');
+  }
+
+  async verifyOrBurn(password: string, encodedHash?: string | null): Promise<boolean> {
+    if (!encodedHash) {
+      await this.derive(password, DUMMY_SALT);
+      return false;
+    }
+
+    return this.verify(password, encodedHash);
   }
 
   async verify(password: string, encodedHash: string): Promise<boolean> {
