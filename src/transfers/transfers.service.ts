@@ -8,6 +8,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  AuditAction,
   IdempotencyStatus,
   Prisma,
   TransferStatus,
@@ -216,6 +217,17 @@ export class TransfersService {
                 amountMinor: request.amountMinor,
                 status: TransferStatus.COMPLETED,
                 completedAt,
+              },
+            });
+
+            await transaction.$queryRaw(
+              Prisma.sql`SELECT set_config('app.audit_write', 'on', true)`,
+            );
+            await transaction.auditLog.create({
+              data: {
+                actorUserId: senderUserId,
+                action: AuditAction.TRANSFER_CREATED,
+                transferId: transfer.id,
               },
             });
 
