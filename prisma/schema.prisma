@@ -23,28 +23,45 @@ enum LedgerAccountKind {
   SYSTEM
 }
 
+enum TransferStatus {
+  PENDING
+  COMPLETED
+}
+
+enum IdempotencyStatus {
+  IN_PROGRESS
+  COMPLETED
+  FAILED
+}
+
 model User {
-  id           String   @id @default(uuid()) @db.Uuid
-  email        String   @unique @db.VarChar(320)
-  passwordHash String   @db.VarChar(255)
-  firstName    String   @db.VarChar(80)
-  lastName     String   @db.VarChar(80)
-  createdAt    DateTime @default(now()) @db.Timestamptz(3)
-  updatedAt    DateTime @updatedAt @db.Timestamptz(3)
-  wallets      Wallet[]
+  id                 String              @id @default(uuid()) @db.Uuid
+  email              String              @unique @db.VarChar(320)
+  passwordHash       String              @db.VarChar(255)
+  firstName          String              @db.VarChar(80)
+  lastName           String              @db.VarChar(80)
+  createdAt          DateTime            @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime            @updatedAt @db.Timestamptz(3)
+  wallets            Wallet[]
+  sentTransfers      Transfer[]          @relation("TransferSender")
+  beneficiaries      Beneficiary[]
+  idempotencyRecords IdempotencyRecord[]
 }
 
 model Wallet {
-  id                  String       @id @default(uuid()) @db.Uuid
-  userId              String       @db.Uuid
-  ledgerAccountId     String       @unique @db.Uuid
+  id                  String        @id @default(uuid()) @db.Uuid
+  userId              String        @db.Uuid
+  ledgerAccountId     String        @unique @db.Uuid
   currency            Currency
-  status              WalletStatus @default(ACTIVE)
-  currentBalanceMinor BigInt       @default(0)
-  createdAt           DateTime     @default(now()) @db.Timestamptz(3)
-  updatedAt           DateTime     @updatedAt @db.Timestamptz(3)
-  user                User         @relation(fields: [userId], references: [id], onDelete: Restrict)
+  status              WalletStatus  @default(ACTIVE)
+  currentBalanceMinor BigInt        @default(0)
+  createdAt           DateTime      @default(now()) @db.Timestamptz(3)
+  updatedAt           DateTime      @updatedAt @db.Timestamptz(3)
+  user                User          @relation(fields: [userId], references: [id], onDelete: Restrict)
   ledgerAccount       LedgerAccount @relation(fields: [ledgerAccountId], references: [id], onDelete: Restrict)
+  outgoingTransfers   Transfer[]    @relation("TransferSourceWallet")
+  incomingTransfers   Transfer[]    @relation("TransferDestinationWallet")
+  beneficiaries       Beneficiary[]
 
   @@unique([userId, currency])
   @@index([userId])
@@ -73,6 +90,7 @@ model LedgerTransaction {
   createdAt   DateTime        @default(now()) @db.Timestamptz(3)
   sealedAt    DateTime?       @db.Timestamptz(3)
   postings    LedgerPosting[]
+  transfer    Transfer?
 }
 
 model LedgerPosting {
@@ -86,4 +104,65 @@ model LedgerPosting {
 
   @@unique([ledgerTransactionId, accountId])
   @@index([accountId, createdAt])
+}
+
+model Transfer {
+  id                  String            @id @default(uuid()) @db.Uuid
+  reference           String            @unique @db.VarChar(120)
+  senderUserId        String            @db.Uuid
+  sourceWalletId      String            @db.Uuid
+  destinationWalletId String            @db.Uuid
+  beneficiaryId       String?           @db.Uuid
+  ledgerTransactionId String            @unique @db.Uuid
+  currency            Currency
+  amountMinor         BigInt
+  status              TransferStatus    @default(PENDING)
+  createdAt           DateTime          @default(now()) @db.Timestamptz(3)
+  updatedAt           DateTime          @updatedAt @db.Timestamptz(3)
+  completedAt         DateTime?         @db.Timestamptz(3)
+  sender              User              @relation("TransferSender", fields: [senderUserId], references: [id], onDelete: Restrict)
+  sourceWallet        Wallet            @relation("TransferSourceWallet", fields: [sourceWalletId], references: [id], onDelete: Restrict)
+  destinationWallet   Wallet            @relation("TransferDestinationWallet", fields: [destinationWalletId], references: [id], onDelete: Restrict)
+  beneficiary         Beneficiary?      @relation(fields: [beneficiaryId], references: [id], onDelete: Restrict)
+  ledgerTransaction   LedgerTransaction @relation(fields: [ledgerTransactionId], references: [id], onDelete: Restrict)
+  idempotencyRecord   IdempotencyRecord?
+
+  @@index([senderUserId, createdAt])
+  @@index([sourceWalletId, createdAt])
+  @@index([destinationWalletId, createdAt])
+}
+
+model Beneficiary {
+  id          String     @id @default(uuid()) @db.Uuid
+  ownerUserId String     @db.Uuid
+  walletId    String     @db.Uuid
+  label       String     @db.VarChar(80)
+  createdAt   DateTime   @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime   @updatedAt @db.Timestamptz(3)
+  deletedAt   DateTime?  @db.Timestamptz(3)
+  owner       User       @relation(fields: [ownerUserId], references: [id], onDelete: Cascade)
+  wallet      Wallet     @relation(fields: [walletId], references: [id], onDelete: Restrict)
+  transfers   Transfer[]
+
+  @@unique([ownerUserId, walletId])
+  @@index([ownerUserId, createdAt])
+}
+
+model IdempotencyRecord {
+  id             String            @id @default(uuid()) @db.Uuid
+  userId         String            @db.Uuid
+  scope          String            @db.VarChar(64)
+  key            String            @db.VarChar(128)
+  requestHash    String            @db.Char(64)
+  status         IdempotencyStatus @default(IN_PROGRESS)
+  responseStatus Int?
+  errorMessage   String?           @db.VarChar(255)
+  transferId     String?           @unique @db.Uuid
+  createdAt      DateTime          @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime          @updatedAt @db.Timestamptz(3)
+  user           User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transfer       Transfer?         @relation(fields: [transferId], references: [id], onDelete: Restrict)
+
+  @@unique([userId, scope, key])
+  @@index([userId, createdAt])
 }

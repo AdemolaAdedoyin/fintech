@@ -54,14 +54,39 @@ The accounting layer is implemented without exposing a public money-mutation end
 - wallet closing serialized against ledger postings so a zero-balance close cannot race with a credit or debit
 - concurrency coverage proving competing debits cannot overspend one wallet and close-vs-credit races resolve to one coherent state
 
-There is intentionally no `POST /ledger`, funding endpoint, transfer endpoint, or arbitrary balance-adjustment endpoint in Phase 3. `LedgerService` is an internal domain service. Phase 4 will build controlled transfer/idempotency behavior on top of it.
+`LedgerService` remains an internal domain service. There is no public arbitrary ledger, funding, or balance-adjustment endpoint.
+
+### Phase 4 — internal transfers, idempotency, and beneficiaries ✅
+
+The first public money-movement workflow is built directly on the Phase 3 ledger rather than introducing a second balance-update path:
+
+- authenticated internal transfers between active wallets
+- source-wallet ownership derived from the verified JWT identity
+- same-currency transfers only; v1 performs no FX conversion
+- positive `BIGINT` minor-unit amounts represented as strings at the API boundary
+- `Transfer` as the product/business record and `LedgerTransaction` as the accounting record
+- one serializable PostgreSQL transaction for the transfer intent, double-entry postings, wallet snapshots, and idempotency outcome
+- deterministic ledger-account locks before balance validation and mutation
+- required persistent `Idempotency-Key` records scoped to the authenticated user and transfer operation
+- request hashing so reuse of the same key with different request data returns `409 Conflict`
+- exact replay of successful requests without creating another transfer or ledger transaction
+- persisted deterministic 4xx failures so adding funds later cannot turn the same failed request/key into a new movement
+- transient PostgreSQL serialization conflicts surfaced as retryable `409 Conflict` responses
+- concurrency coverage proving two simultaneous $80 transfers from a $100 wallet cannot both succeed
+- concurrent same-key coverage proving retries deduplicate to one transfer
+- completed transfer rows protected from direct mutation and independently checked against the exact sealed two-posting ledger transaction at commit
+- idempotency claims must start `IN_PROGRESS`; request identity is immutable and terminal `COMPLETED`/`FAILED` records cannot be rewritten or deleted
+- saved beneficiaries scoped to the authenticated owner
+- soft deletion for beneficiaries so removing a saved recipient does not erase historical transfer links
+
+Phase 4 intentionally remains synchronous. Reversals, async outbox processing, notifications, webhook delivery, and payment-provider integrations belong to later phases.
 
 ## Planned phases
 
 1. **Foundation** — NestJS, TypeScript, PostgreSQL, Prisma, Docker, configuration, logging, Swagger, health checks, CI. ✅
 2. **Identity and wallets** — registration/login, ownership authorization, wallet lifecycle, minor-unit money representation. ✅
 3. **Ledger core** — immutable ledger transactions/postings, balance invariants, atomic database transactions. ✅
-4. **Transfers** — internal transfers, idempotency, concurrency protection, beneficiaries.
+4. **Transfers** — internal transfers, idempotency, concurrency protection, beneficiaries. ✅
 5. **Reversals and audit** — compensating ledger entries, reversal rules, audit history.
 6. **Async infrastructure** — Redis/BullMQ, outbox processing, notifications, retryable webhook delivery.
 7. **Provider abstraction** — mock provider first, optional tokenized/hosted Paystack integration with verified webhooks.
@@ -69,7 +94,7 @@ There is intentionally no `POST /ledger`, funding endpoint, transfer endpoint, o
 
 After the useful RiseBeta concepts are represented safely in this project, `riseBeta` will be archived as an earlier experimental iteration.
 
-## Public API available through Phase 3
+## Public API available through Phase 4
 
 | Method | Route | Purpose |
 | --- | --- | --- |
@@ -80,10 +105,39 @@ After the useful RiseBeta concepts are represented safely in this project, `rise
 | `GET` | `/api/v1/wallets` | List wallets owned by the authenticated user |
 | `GET` | `/api/v1/wallets/:walletId` | Read one owned wallet |
 | `POST` | `/api/v1/wallets/:walletId/close` | Close an owned zero-balance wallet |
+| `POST` | `/api/v1/transfers` | Create an idempotent same-currency internal transfer |
+| `GET` | `/api/v1/transfers` | List transfers initiated by the authenticated user |
+| `GET` | `/api/v1/transfers/:transferId` | Read one transfer initiated by the authenticated user |
+| `POST` | `/api/v1/beneficiaries` | Save another user's active wallet as a beneficiary |
+| `GET` | `/api/v1/beneficiaries` | List active saved beneficiaries |
+| `DELETE` | `/api/v1/beneficiaries/:beneficiaryId` | Soft-delete a saved beneficiary |
 | `GET` | `/api/v1/health/live` | Process liveness |
 | `GET` | `/api/v1/health/ready` | PostgreSQL readiness |
 
-Swagger is available at `/docs`.
+Swagger is available at `/docs` and documents the transfer `Idempotency-Key` header and request DTOs.
+
+### Creating an internal transfer
+
+`POST /api/v1/transfers` requires an authenticated bearer token and an `Idempotency-Key` header. The request must identify the sender's source wallet and exactly one destination form: either a direct `destinationWalletId` or a saved `beneficiaryId`.
+
+```http
+POST /api/v1/transfers
+Authorization: Bearer <access-token>
+Idempotency-Key: transfer-2026-09-11-001
+Content-Type: application/json
+```
+
+```json
+{
+  "sourceWalletId": "11111111-1111-4111-8111-111111111111",
+  "destinationWalletId": "22222222-2222-4222-8222-222222222222",
+  "amountMinor": "2500"
+}
+```
+
+The amount is always expressed in minor units. For USD, `"2500"` represents `$25.00`. Successful retries with the same key and identical normalized request return the existing transfer instead of moving money again. Reusing the same key with a different request returns `409 Conflict`.
+
+A serialization conflict caused by another concurrent transfer also returns `409 Conflict`; retry that request with the **same** idempotency key. Because the conflicting database transaction did not commit, the retry can safely establish or replay the final result.
 
 ## Ledger model
 
@@ -111,6 +165,8 @@ LedgerTransaction
 
 A valid transaction must have at least two non-zero postings, use one currency, and sum exactly to zero. Once sealed, the transaction and its postings are immutable. Customer wallet accounts may never become negative. Posting values and resulting account balances must remain within PostgreSQL's signed `BIGINT` range.
 
+For internal wallet transfers, the source and destination wallet ledger accounts are the two posting accounts. The transfer row and ledger transaction share the same unique reference, and a deferred PostgreSQL integrity check independently verifies the source debit and destination credit match the transfer amount exactly.
+
 For future external funding, an internal clearing account can be the counterpart:
 
 ```text
@@ -126,7 +182,7 @@ This lets provider integrations arrive later without inventing or directly editi
 
 All balances and postings use PostgreSQL `BIGINT` values in the smallest currency unit. For example, `$10.25` is represented internally as `1025` cents and `₦5,000.00` as `500000` kobo.
 
-Because JavaScript numbers cannot safely represent every 64-bit integer, public wallet responses serialize `currentBalanceMinor` as a decimal string. Internal ledger arithmetic uses JavaScript `bigint`.
+Because JavaScript numbers cannot safely represent every 64-bit integer, public wallet and transfer responses serialize monetary minor-unit values as decimal strings. Internal ledger arithmetic uses JavaScript `bigint`.
 
 ## Local setup
 
@@ -315,11 +371,16 @@ The rebuilt service follows these rules from the beginning:
 - new wallet ledger accounts must begin at zero and be paired with exactly one matching product wallet by commit;
 - ledger accounts are locked in deterministic order before balance checks and updates;
 - wallet close operations take the same ledger-account lock used by financial postings;
+- transfer source ownership is checked against the authenticated user and independently rechecked by a deferred database constraint;
+- completed transfers are immutable and must reference the exact matching sealed ledger debit/credit transaction;
+- transfer retries require persisted idempotency keys and normalized request hashes;
+- terminal idempotency outcomes cannot be rewritten or deleted;
+- beneficiaries are owner-scoped and soft-deleted so transfer history remains referentially intact;
 - raw card PAN/CVV/PIN handling will not be part of the rebuilt payment flow;
 - user-controlled values are not concatenated into SQL;
 - the production container runs as a non-root user and installs dependencies from the committed lockfile.
 
-The transaction-local ledger-write setting is an application/database integrity guard against accidental bypasses by normal application code. It is not intended to be a security boundary against an administrator with full PostgreSQL privileges; a production deployment with that threat model would add database-role separation and tighter privilege controls.
+The transaction-local ledger-write and transfer-write settings are application/database integrity guards against accidental bypasses by normal application code. They are not intended to be security boundaries against an administrator with full PostgreSQL privileges; a production deployment with that threat model would add database-role separation and tighter privilege controls.
 
 ## Historical context
 
