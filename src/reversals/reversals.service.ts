@@ -215,11 +215,7 @@ export class ReversalsService {
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError) {
         if (error.code === 'P2002') {
-          outcome = await this.replayAfterIdempotencyRace(
-            actorUserId,
-            idempotencyKey,
-            requestHash,
-          );
+          outcome = await this.replayAfterIdempotencyRace(actorUserId, idempotencyKey, requestHash);
           return this.unwrapOutcome(outcome);
         }
 
