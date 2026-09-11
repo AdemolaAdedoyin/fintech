@@ -267,7 +267,7 @@ export class TransfersService {
           return this.unwrapOutcome(outcome);
         }
 
-        if (error.code === 'P2034') {
+        if (this.isSerializationConflict(error)) {
           throw new ConflictException(
             'Concurrent transfer update detected; retry using the same Idempotency-Key',
           );
@@ -420,6 +420,10 @@ export class TransfersService {
     }
 
     return this.resolveExistingIdempotency(existing, requestHash);
+  }
+
+  private isSerializationConflict(error: Prisma.PrismaClientKnownRequestError): boolean {
+    return error.code === 'P2034' || (error.code === 'P2010' && error.meta?.code === '40001');
   }
 
   private unwrapOutcome(outcome: TransferAttemptOutcome) {
