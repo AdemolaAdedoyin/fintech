@@ -3,11 +3,13 @@ import { PasswordService } from './password.service';
 describe('PasswordService', () => {
   const service = new PasswordService();
 
-  it('hashes passwords with scrypt without storing plaintext', async () => {
+  it('hashes passwords with the approved scrypt profile without storing plaintext', async () => {
     const password = 'correct-horse-battery-staple';
     const encoded = await service.hash(password);
+    const [algorithm, n, r, p] = encoded.split('$');
 
-    expect(encoded).toMatch(/^scrypt\$/);
+    expect(algorithm).toBe('scrypt');
+    expect({ n, r, p }).toEqual({ n: '32768', r: '8', p: '3' });
     expect(encoded).not.toContain(password);
     expect(encoded.split('$')).toHaveLength(6);
   });
