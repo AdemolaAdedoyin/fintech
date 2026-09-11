@@ -15,12 +15,13 @@ permissions:
 jobs:
   quality:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     env:
       NODE_ENV: test
       PORT: 3000
       DATABASE_URL: postgresql://fintech:fintech_test@localhost:5432/fintech_test?schema=public
       JWT_ACCESS_SECRET: ci-only-secret-that-is-at-least-thirty-two-characters-long
+      JWT_ACCESS_TTL_SECONDS: 900
       CORS_ORIGIN: http://localhost:3000
       LOG_LEVEL: info
 
@@ -61,9 +62,16 @@ jobs:
       - name: Quality gates
         run: npm run ci
 
+      - name: Apply database migrations
+        run: npm run db:migrate:deploy
+
+      - name: Identity and wallet e2e tests
+        run: npm run test:e2e
+
       - name: Validate container definitions
         run: |
           docker compose config --quiet
+          docker build --target migrate --tag fintech-migrate:ci .
           docker build --tag fintech-transaction-platform:ci .
 
       - name: Smoke test PostgreSQL readiness endpoint

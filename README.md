@@ -6,9 +6,9 @@ This repository is being rebuilt from the original JavaScript/MySQL fintech API 
 
 ## Modernization status
 
-### Phase 1 — secure platform foundation
+### Phase 1 — secure platform foundation ✅
 
-Current branch scope:
+Completed foundation:
 
 - NestJS + TypeScript application foundation
 - PostgreSQL + Prisma
@@ -21,11 +21,28 @@ Current branch scope:
 - graceful application shutdown hooks
 - strict linting, formatting, type checking, unit tests, build checks, dependency audit, container validation, and CI smoke test
 
-Domain behavior such as authentication, wallets, ledger postings, transfers, idempotency, and reversals is intentionally **not implemented yet**. Those are added in later reviewed phases.
+### Phase 2 — identity and wallets
+
+Current branch adds the first domain layer:
+
+- atomic account registration plus initial wallet creation
+- canonical, unique email identities
+- scrypt password hashing using Node's crypto implementation
+- short-lived HS256 JWT access tokens with explicit issuer and audience validation
+- protected `/auth/me` identity lookup
+- ownership-scoped wallet APIs that never trust caller-supplied user IDs
+- one wallet per supported currency (`USD`, `NGN`)
+- `BIGINT` minor-unit balance snapshots exposed safely as strings in JSON
+- explicit zero-balance wallet closing instead of arbitrary status mutation
+- Prisma migration history for the identity/wallet schema
+- PostgreSQL-backed end-to-end tests for registration, login, authorization, wallet uniqueness, and wallet lifecycle
+- a dedicated migration container that applies schema changes before the local API starts
+
+No funding, ledger postings, transfers, balance mutation API, idempotency, reversals, or payment-provider integrations are implemented in Phase 2. Those remain intentionally deferred so money movement is introduced only after the ledger invariants are designed and reviewed.
 
 ## Planned phases
 
-1. **Foundation** — NestJS, TypeScript, PostgreSQL, Prisma, Docker, configuration, logging, Swagger, health checks, CI.
+1. **Foundation** — NestJS, TypeScript, PostgreSQL, Prisma, Docker, configuration, logging, Swagger, health checks, CI. ✅
 2. **Identity and wallets** — registration/login, ownership authorization, wallet lifecycle, minor-unit money representation.
 3. **Ledger core** — immutable ledger transactions/postings, balance invariants, atomic database transactions.
 4. **Transfers** — internal transfers, idempotency, concurrency protection, beneficiaries.
@@ -35,6 +52,28 @@ Domain behavior such as authentication, wallets, ledger postings, transfers, ide
 8. **Production polish** — deployment, observability, expanded security testing, architecture documentation.
 
 After the useful RiseBeta concepts are represented safely in this project, `riseBeta` will be archived as an earlier experimental iteration.
+
+## API available in Phase 2
+
+| Method | Route | Purpose |
+| --- | --- | --- |
+| `POST` | `/api/v1/auth/register` | Register and create the first wallet atomically |
+| `POST` | `/api/v1/auth/login` | Authenticate and issue a short-lived bearer token |
+| `GET` | `/api/v1/auth/me` | Return the authenticated user profile |
+| `POST` | `/api/v1/wallets` | Create another supported-currency wallet |
+| `GET` | `/api/v1/wallets` | List wallets owned by the authenticated user |
+| `GET` | `/api/v1/wallets/:walletId` | Read one owned wallet |
+| `POST` | `/api/v1/wallets/:walletId/close` | Close an owned zero-balance wallet |
+| `GET` | `/api/v1/health/live` | Process liveness |
+| `GET` | `/api/v1/health/ready` | PostgreSQL readiness |
+
+Swagger is available at `/docs`.
+
+## Money representation
+
+Balances are stored as PostgreSQL `BIGINT` values in the smallest currency unit. For example, `$10.25` is represented internally as `1025` cents and `₦5,000.00` as `500000` kobo.
+
+Because JavaScript numbers cannot safely represent every 64-bit integer, API responses serialize `currentBalanceMinor` as a decimal string. Phase 2 only initializes balances to zero; actual balance changes will be introduced through the ledger in Phase 3 rather than through direct wallet mutation endpoints.
 
 ## Local setup
 
@@ -52,7 +91,7 @@ Copy the example file:
 cp .env.example .env
 ```
 
-Replace `JWT_ACCESS_SECRET` with a private random value of at least 32 characters. The application rejects both weak secrets and the documented example placeholder.
+Replace `JWT_ACCESS_SECRET` with a private random value of at least 32 characters. The application rejects both weak secrets and the documented example placeholder. `JWT_ACCESS_TTL_SECONDS` defaults to 900 seconds.
 
 ### Run with Docker Compose
 
@@ -60,7 +99,7 @@ Replace `JWT_ACCESS_SECRET` with a private random value of at least 32 character
 docker compose up --build
 ```
 
-This starts:
+Compose starts PostgreSQL, applies committed Prisma migrations through the one-shot `migrate` service, and only then starts the API.
 
 - API: `http://localhost:3000`
 - Swagger UI: `http://localhost:3000/docs`
@@ -68,14 +107,13 @@ This starts:
 - Readiness: `http://localhost:3000/api/v1/health/ready`
 - PostgreSQL: `localhost:5432` (bound to the local host only)
 
-Both PostgreSQL and the API have container health checks. The API waits for PostgreSQL to be healthy before starting.
-
 ### Run the API locally with PostgreSQL in Docker
 
 ```bash
 docker compose up postgres -d
 npm ci
 npm run prisma:generate
+npm run db:migrate:deploy
 npm run start:dev
 ```
 
@@ -88,17 +126,23 @@ npm run typecheck
 npm test
 npm run prisma:validate
 npm run build
+npm run db:migrate:deploy
+npm run test:e2e
 ```
 
-GitHub Actions also performs a production dependency audit, validates the Compose definition, builds the production Docker image from the committed lockfile, and starts the compiled API against a real PostgreSQL service to verify the readiness endpoint.
+GitHub Actions performs a production dependency audit, validates the Prisma schema, applies migrations against a real PostgreSQL service, runs the identity/wallet end-to-end suite, validates the Compose definition, builds both migration and production container targets from the committed lockfile, and starts the compiled API to verify database readiness.
 
 ## Security baseline
 
-The rebuilt service follows a few rules from the beginning:
+The rebuilt service follows these rules from the beginning:
 
 - required secrets fail validation instead of falling back to committed defaults;
 - the documented example JWT secret is explicitly rejected;
+- passwords are hashed with scrypt and plaintext passwords are never persisted;
+- JWT verification constrains algorithm, issuer, audience, expiry, and authenticated user existence;
 - authorization headers, cookies, passwords, and token-like fields are redacted from structured logs;
+- authenticated wallet ownership comes from the verified token identity rather than request-provided user IDs;
+- duplicate email and duplicate per-currency wallet constraints are enforced in PostgreSQL as well as the service layer;
 - the API applies secure HTTP headers through Helmet;
 - CORS is configured from an explicit allowlist;
 - request validation is strict and rejects unknown fields;
