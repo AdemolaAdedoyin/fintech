@@ -22,10 +22,11 @@ export interface NormalizedLedgerTransactionInput {
 }
 
 const MAX_POSTINGS = 50;
+export const MIN_MINOR_UNITS = -9_223_372_036_854_775_808n;
 export const MAX_MINOR_UNITS = 9_223_372_036_854_775_807n;
 
 export function isSupportedMinorUnitValue(value: bigint): boolean {
-  return value >= -MAX_MINOR_UNITS && value <= MAX_MINOR_UNITS;
+  return value >= MIN_MINOR_UNITS && value <= MAX_MINOR_UNITS;
 }
 
 export function normalizeLedgerTransactionInput(
