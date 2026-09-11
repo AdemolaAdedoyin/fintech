@@ -14,7 +14,7 @@
     "format:check": "prettier --check \"src/**/*.ts\" \"test/**/*.ts\"",
     "lint": "eslint \"src/**/*.ts\" \"test/**/*.ts\" --max-warnings=0",
     "start": "nest start",
-    "dev:bootstrap": "docker compose stop api && docker compose up -d --wait postgres && npm run prisma:generate && npm run db:migrate:deploy",
+    "dev:bootstrap": "docker compose stop api && docker compose up -d --wait postgres redis && npm run prisma:generate && npm run db:migrate:deploy",
     "start:dev": "npm run dev:bootstrap && nest start --watch",
     "start:prod": "node dist/main.js",
     "test": "jest --runInBand",
