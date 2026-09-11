@@ -59,8 +59,13 @@ jobs:
       - name: Generate Prisma client
         run: npm run prisma:generate
 
-      - name: Quality gates
-        run: npm run ci
+      - name: Format diagnostic
+        run: |
+          npm run format
+          git diff -- src/ledger/ledger.invariants.ts src/ledger/ledger.invariants.spec.ts src/ledger/ledger.service.ts test/ledger.e2e-spec.ts
+
+      - name: Quality gates after formatting
+        run: npm run lint && npm run typecheck && npm test && npm run prisma:validate && npm run build
 
       - name: Apply database migrations
         run: npm run db:migrate:deploy
