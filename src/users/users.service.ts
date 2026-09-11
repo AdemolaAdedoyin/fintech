@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { Currency, type User, type Wallet } from '@prisma/client';
+import { Currency, LedgerAccountKind, type User, type Wallet } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 export type SafeUser = Pick<
@@ -49,43 +49,43 @@ export class UsersService {
   }
 
   async createWithInitialWallet(input: CreateUserInput): Promise<CreatedUserWithWallet> {
-    const created = await this.prisma.user.create({
-      data: {
-        email: this.normalizeEmail(input.email),
-        passwordHash: input.passwordHash,
-        firstName: input.firstName.trim(),
-        lastName: input.lastName.trim(),
-        wallets: {
-          create: {
-            currency: input.currency ?? Currency.USD,
-          },
+    const currency = input.currency ?? Currency.USD;
+
+    return this.prisma.$transaction(async (transaction) => {
+      const created = await transaction.user.create({
+        data: {
+          email: this.normalizeEmail(input.email),
+          passwordHash: input.passwordHash,
+          firstName: input.firstName.trim(),
+          lastName: input.lastName.trim(),
         },
-      },
-      select: {
-        id: true,
-        email: true,
-        firstName: true,
-        lastName: true,
-        createdAt: true,
-        updatedAt: true,
-        wallets: true,
-      },
+      });
+
+      const ledgerAccount = await transaction.ledgerAccount.create({
+        data: {
+          kind: LedgerAccountKind.WALLET,
+          currency,
+        },
+      });
+
+      const wallet = await transaction.wallet.create({
+        data: {
+          userId: created.id,
+          ledgerAccountId: ledgerAccount.id,
+          currency,
+        },
+      });
+
+      const user: SafeUser = {
+        id: created.id,
+        email: created.email,
+        firstName: created.firstName,
+        lastName: created.lastName,
+        createdAt: created.createdAt,
+        updatedAt: created.updatedAt,
+      };
+
+      return { user, wallet };
     });
-
-    const [wallet] = created.wallets;
-    if (!wallet) {
-      throw new Error('Initial wallet was not created with the user');
-    }
-
-    const user: SafeUser = {
-      id: created.id,
-      email: created.email,
-      firstName: created.firstName,
-      lastName: created.lastName,
-      createdAt: created.createdAt,
-      updatedAt: created.updatedAt,
-    };
-
-    return { user, wallet };
   }
 }
