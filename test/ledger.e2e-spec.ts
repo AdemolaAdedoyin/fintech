@@ -215,12 +215,12 @@ describe('Ledger core (e2e)', () => {
     ).rejects.toThrow();
 
     expect(await prisma.ledgerTransaction.count({ where: { reference: ledgerReference } })).toBe(0);
-    expect((await prisma.ledgerAccount.findUniqueOrThrow({ where: { id: account.id } })).balanceMinor).toBe(
-      0n,
-    );
-    expect((await prisma.wallet.findUniqueOrThrow({ where: { id: wallet.id } })).currentBalanceMinor).toBe(
-      0n,
-    );
+    expect(
+      (await prisma.ledgerAccount.findUniqueOrThrow({ where: { id: account.id } })).balanceMinor,
+    ).toBe(0n);
+    expect(
+      (await prisma.wallet.findUniqueOrThrow({ where: { id: wallet.id } })).currentBalanceMinor,
+    ).toBe(0n);
   });
 
   it('rejects an unbalanced transaction at the database commit boundary too', async () => {
@@ -301,12 +301,12 @@ describe('Ledger core (e2e)', () => {
       }),
     ).rejects.toBeInstanceOf(ConflictException);
 
-    expect((await prisma.ledgerAccount.findUniqueOrThrow({ where: { id: account.id } })).balanceMinor).toBe(
-      MAX_MINOR_UNITS,
-    );
-    expect((await prisma.wallet.findUniqueOrThrow({ where: { id: wallet.id } })).currentBalanceMinor).toBe(
-      MAX_MINOR_UNITS,
-    );
+    expect(
+      (await prisma.ledgerAccount.findUniqueOrThrow({ where: { id: account.id } })).balanceMinor,
+    ).toBe(MAX_MINOR_UNITS);
+    expect(
+      (await prisma.wallet.findUniqueOrThrow({ where: { id: wallet.id } })).currentBalanceMinor,
+    ).toBe(MAX_MINOR_UNITS);
     expect(
       (await prisma.ledgerAccount.findUniqueOrThrow({ where: { id: systemAccount.id } })).balanceMinor,
     ).toBe(-MAX_MINOR_UNITS);
