@@ -18,6 +18,11 @@ enum WalletStatus {
   CLOSED
 }
 
+enum LedgerAccountKind {
+  WALLET
+  SYSTEM
+}
+
 model User {
   id           String   @id @default(uuid()) @db.Uuid
   email        String   @unique @db.VarChar(320)
@@ -32,13 +37,53 @@ model User {
 model Wallet {
   id                  String       @id @default(uuid()) @db.Uuid
   userId              String       @db.Uuid
+  ledgerAccountId     String       @unique @db.Uuid
   currency            Currency
   status              WalletStatus @default(ACTIVE)
   currentBalanceMinor BigInt       @default(0)
   createdAt           DateTime     @default(now()) @db.Timestamptz(3)
   updatedAt           DateTime     @updatedAt @db.Timestamptz(3)
   user                User         @relation(fields: [userId], references: [id], onDelete: Restrict)
+  ledgerAccount       LedgerAccount @relation(fields: [ledgerAccountId], references: [id], onDelete: Restrict)
 
   @@unique([userId, currency])
   @@index([userId])
+}
+
+model LedgerAccount {
+  id            String            @id @default(uuid()) @db.Uuid
+  kind          LedgerAccountKind
+  currency      Currency
+  allowNegative Boolean           @default(false)
+  balanceMinor  BigInt            @default(0)
+  systemKey     String?           @unique @db.VarChar(120)
+  createdAt     DateTime          @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime          @updatedAt @db.Timestamptz(3)
+  wallet        Wallet?
+  postings      LedgerPosting[]
+
+  @@index([currency, kind])
+}
+
+model LedgerTransaction {
+  id          String          @id @default(uuid()) @db.Uuid
+  reference   String          @unique @db.VarChar(120)
+  currency    Currency
+  description String?         @db.VarChar(255)
+  createdAt   DateTime        @default(now()) @db.Timestamptz(3)
+  sealedAt    DateTime?       @db.Timestamptz(3)
+  postings    LedgerPosting[]
+}
+
+model LedgerPosting {
+  id                  String            @id @default(uuid()) @db.Uuid
+  ledgerTransactionId String            @db.Uuid
+  accountId           String            @db.Uuid
+  amountMinor         BigInt
+  createdAt           DateTime          @default(now()) @db.Timestamptz(3)
+  ledgerTransaction   LedgerTransaction @relation(fields: [ledgerTransactionId], references: [id], onDelete: Restrict)
+  account             LedgerAccount     @relation(fields: [accountId], references: [id], onDelete: Restrict)
+
+  @@unique([ledgerTransactionId, accountId])
+  @@index([accountId, createdAt])
 }
