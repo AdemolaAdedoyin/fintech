@@ -19,6 +19,10 @@ describe('PasswordService', () => {
     await expect(service.verify('wrong-password', encoded)).resolves.toBe(false);
   });
 
+  it('burns equivalent scrypt work and returns false when no hash exists', async () => {
+    await expect(service.verifyOrBurn('unknown-user-password', null)).resolves.toBe(false);
+  });
+
   it('rejects malformed or unsupported hashes safely', async () => {
     await expect(service.verify('password', 'bcrypt$invalid')).resolves.toBe(false);
     await expect(service.verify('password', 'scrypt$1$1$1$bad$bad')).resolves.toBe(false);
