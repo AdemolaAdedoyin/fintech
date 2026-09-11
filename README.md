@@ -1,6 +1,6 @@
 # Fintech Transaction Platform
 
-A production-style backend project for wallets, transfers, ledger accounting, reversals, and payment infrastructure.
+A production-style backend project for wallets, transfers, ledger accounting, reversals, asynchronous event delivery, and payment infrastructure.
 
 This repository is being rebuilt from the original JavaScript/MySQL fintech API and selected concepts from the experimental `riseBeta` repository. The modernization is intentionally phased so each layer can be reviewed before the next one is added.
 
@@ -96,7 +96,26 @@ Reversals preserve the immutable accounting model instead of editing or deleting
 - deferred PostgreSQL integrity checks independently verify that a reversal exactly compensates its original transfer and has one matching reversal audit event
 - E2E concurrency coverage proves simultaneous reversal attempts result in exactly one compensating ledger transaction
 
-Phase 5 remains synchronous. Redis/BullMQ, transactional outbox dispatch, notifications, and retryable webhook delivery belong to Phase 6.
+### Phase 6 — async infrastructure ✅
+
+PostgreSQL remains the source of financial truth. Redis and BullMQ are used only after a financial database transaction has committed:
+
+- Redis + BullMQ queues for asynchronous domain-event and webhook work
+- a transactional `OutboxEvent` row created inside the exact same serializable PostgreSQL transaction as each successful transfer or reversal
+- failed financial transactions create no outbox event, so queue activity can never make a failed transfer appear successful
+- deterministic BullMQ job IDs and database uniqueness constraints make worker retries idempotent
+- persisted in-app notifications for transfer completion and reversal events
+- notification history is owner-scoped, append-only event data with an idempotent read marker
+- user-owned HTTPS webhook endpoints with delivery history retained after an endpoint is disabled
+- outgoing callback payloads signed with HMAC-SHA256 using endpoint-specific derived secrets
+- callback timestamps, delivery IDs, event types, bounded request timeouts, and exponential BullMQ retry/backoff
+- delivery attempts and terminal success/failure states persisted in PostgreSQL rather than inferred from queue state
+- HTTPS-only endpoint validation plus rejection of localhost and private literal IP targets as a first SSRF boundary
+- `/api/v1/health/async` checks Redis/BullMQ independently of PostgreSQL readiness
+- Redis outages do not mutate balances or ledger history; unpublished database outbox rows remain available for later dispatch
+- CI runs PostgreSQL and Redis, applies all migrations, runs domain E2E tests, builds the production containers, and smoke-tests both database and async health endpoints
+
+The queue is deliberately not a financial correctness mechanism. Ledger postings, transfer/reversal records, idempotency state, audit history, and the outbox event commit together in PostgreSQL first; workers only perform downstream side effects.
 
 ## Planned phases
 
@@ -105,13 +124,14 @@ Phase 5 remains synchronous. Redis/BullMQ, transactional outbox dispatch, notifi
 3. **Ledger core** — immutable ledger transactions/postings, balance invariants, atomic database transactions. ✅
 4. **Transfers** — internal transfers, idempotency, concurrency protection, beneficiaries. ✅
 5. **Reversals and audit** — compensating ledger entries, reversal rules, audit history. ✅
-6. **Async infrastructure** — Redis/BullMQ, outbox processing, notifications, retryable webhook delivery.
-7. **Provider abstraction** — mock provider first, optional tokenized/hosted Paystack integration with verified webhooks.
-8. **Production polish** — deployment, observability, expanded security testing, architecture documentation.
+6. **Async infrastructure** — Redis/BullMQ, transactional outbox processing, notifications, signed retryable webhook delivery. ✅
+7. **Provider abstraction** — mock provider first, optional tokenized/hosted Paystack integration with verified provider webhooks.
+8. **Production polish** — deployment, observability, expanded security testing, production privilege/egress hardening, and operational safeguards.
+9. **Final documentation** — comprehensive Swagger/OpenAPI request/response examples; complete endpoint, status-code, and error documentation; callback signature-verification examples; architecture and sequence diagrams; deployment/runbook instructions; and a guided curl/Swagger walkthrough so a GitHub reviewer can understand and test the entire backend without needing a UI.
 
-After the useful RiseBeta concepts are represented safely in this project, `riseBeta` will be archived as an earlier experimental iteration.
+After the final documentation review confirms the rebuilt API represents the useful legacy concepts safely, `riseBeta` will be archived as an earlier experimental iteration.
 
-## Public API available through Phase 5
+## Public API available through Phase 6
 
 | Method | Route | Purpose |
 | --- | --- | --- |
@@ -131,10 +151,17 @@ After the useful RiseBeta concepts are represented safely in this project, `rise
 | `POST` | `/api/v1/beneficiaries` | Save another user's active wallet as a beneficiary |
 | `GET` | `/api/v1/beneficiaries` | List active saved beneficiaries |
 | `DELETE` | `/api/v1/beneficiaries/:beneficiaryId` | Soft-delete a saved beneficiary |
+| `GET` | `/api/v1/notifications` | List recent async notifications owned by the authenticated user |
+| `POST` | `/api/v1/notifications/:notificationId/read` | Mark one owned notification as read |
+| `POST` | `/api/v1/webhooks/endpoints` | Register an HTTPS callback endpoint and return its signing secret once |
+| `GET` | `/api/v1/webhooks/endpoints` | List owned callback endpoints without revealing signing secrets |
+| `DELETE` | `/api/v1/webhooks/endpoints/:endpointId` | Disable an endpoint while preserving delivery history |
+| `GET` | `/api/v1/webhooks/deliveries` | List recent delivery attempts for owned endpoints |
 | `GET` | `/api/v1/health/live` | Process liveness |
 | `GET` | `/api/v1/health/ready` | PostgreSQL readiness |
+| `GET` | `/api/v1/health/async` | Redis/BullMQ connectivity |
 
-Swagger is available at `/docs` and documents the transfer/reversal `Idempotency-Key` headers and request DTOs.
+Swagger is available at `/docs`. The final documentation phase will expand the generated API description with exhaustive examples, response/error schemas, and an end-to-end reviewer walkthrough.
 
 ### Creating an internal transfer
 
@@ -177,6 +204,51 @@ Content-Type: application/json
 ```
 
 A reversal does not rewrite the original transfer. It creates a second immutable ledger transaction that credits the original source account and debits the original destination account for the same amount. If the destination wallet no longer has enough funds, the request returns `409 Conflict` and no partial reversal is committed. Retrying a deterministic failed reversal with the same idempotency key returns the stored failure even if balances later change.
+
+### Transactional outbox flow
+
+```text
+HTTP transfer/reversal request
+        |
+        v
+PostgreSQL SERIALIZABLE transaction
+  ├── financial/business record
+  ├── immutable ledger postings
+  ├── wallet balance snapshots
+  ├── idempotency result
+  ├── audit event
+  └── OutboxEvent
+        |
+        | COMMIT
+        v
+Outbox dispatcher
+        |
+        v
+Redis / BullMQ domain-event job
+  ├── persisted user notifications
+  └── persisted WebhookDelivery rows
+               |
+               v
+        BullMQ delivery jobs
+               |
+               v
+      signed HTTPS callbacks
+```
+
+No BullMQ worker updates wallet balances or ledger postings. If Redis is unavailable, the financial transaction can still commit and its unpublished outbox event remains in PostgreSQL for later dispatch.
+
+### Outgoing webhook signatures
+
+When an endpoint is registered, its response includes a `signingSecret` once. Store that secret securely on the callback receiver. Deliveries include:
+
+```text
+X-Fintech-Event
+X-Fintech-Delivery
+X-Fintech-Timestamp
+X-Fintech-Signature: v1=<hex-hmac>
+```
+
+The signature is HMAC-SHA256 over the exact string `<timestamp>.<raw-request-body>` using the endpoint signing secret. Consumers must verify against the raw bytes/body before parsing or mutating the payload. The final documentation phase will provide complete verification examples and replay-window guidance.
 
 ## Ledger model
 
@@ -247,7 +319,7 @@ Because JavaScript numbers cannot safely represent every 64-bit integer, public 
 - npm 10+
 - Docker Desktop with Docker Compose
 
-The recommended development topology is **PostgreSQL in Docker + NestJS running locally in watch mode**. The repository also includes a Dockerized API for production-style/container testing, but you normally do not run that API container while actively developing locally.
+The recommended development topology is **PostgreSQL + Redis in Docker, with NestJS running locally in watch mode**. The repository also includes a Dockerized API for production-style/container testing.
 
 ### First-time setup
 
@@ -257,12 +329,18 @@ Create your environment file:
 cp .env.example .env
 ```
 
-Replace `JWT_ACCESS_SECRET` with a private random value of at least 32 characters. The application rejects both weak secrets and the documented example placeholder.
+Replace both example secret values with private random strings of at least 32 characters:
 
-The default host-side database URL is:
+```env
+JWT_ACCESS_SECRET=<private-random-value>
+WEBHOOK_SIGNING_MASTER_SECRET=<different-private-random-value>
+```
+
+The application rejects the documented example placeholders. The default host-side infrastructure URLs are:
 
 ```env
 DATABASE_URL=postgresql://fintech:fintech_dev@localhost:5433/fintech?schema=public
+REDIS_URL=redis://localhost:6379
 ```
 
 Install dependencies:
@@ -280,46 +358,41 @@ npm run start:dev
 `start:dev` performs the local bootstrap automatically:
 
 1. stops the Docker `api` service if it was previously running, preventing a port `3000` conflict;
-2. starts PostgreSQL in Docker in detached mode and waits for its health check;
+2. starts PostgreSQL and Redis in Docker in detached mode and waits for both health checks;
 3. generates the Prisma client;
 4. runs `prisma migrate deploy` — Prisma applies only pending committed migrations and does nothing when the database is already current;
-5. starts NestJS locally in watch mode.
-
-After `npm ci`, you therefore normally only need:
-
-```bash
-npm run start:dev
-```
+5. starts NestJS locally in watch mode, including the BullMQ workers and outbox dispatchers.
 
 The development topology is:
 
 ```text
 Host machine
-├── NestJS API                 localhost:3000
+├── NestJS API + BullMQ workers      localhost:3000
 │
 └── Docker
-    └── PostgreSQL             localhost:5433 -> container:5432
+    ├── PostgreSQL                   localhost:5433 -> container:5432
+    └── Redis                        localhost:6379 -> container:6379
 ```
 
-Stopping NestJS with `Ctrl+C` does not stop PostgreSQL. PostgreSQL was started in detached mode and continues running for the next development session.
+Stopping NestJS with `Ctrl+C` does not stop PostgreSQL or Redis because both infrastructure services are started in detached mode.
 
-Useful database commands:
+Useful infrastructure commands:
 
 ```bash
 # Check container health and published ports
 docker compose ps
 
-# Stop only PostgreSQL
-docker compose stop postgres
+# Stop local infrastructure
+docker compose stop postgres redis
 
-# Start the existing PostgreSQL container again
-docker compose start postgres
+# Start existing infrastructure containers again
+docker compose start postgres redis
 
-# Stop/remove Compose containers and network while preserving database data
+# Stop/remove Compose containers and network while preserving volumes
 docker compose down
 ```
 
-Do not use `docker compose down -v` unless you intentionally want to delete the local PostgreSQL volume and all local database data.
+Do not use `docker compose down -v` unless you intentionally want to delete the local PostgreSQL and Redis volumes.
 
 ### Why is there also a Docker `api` service?
 
@@ -327,8 +400,8 @@ The Docker API is the same NestJS application packaged as a production-style con
 
 For everyday coding, local NestJS watch mode is more convenient. Use one API mode at a time:
 
-- **Local development:** PostgreSQL in Docker + `npm run start:dev` for NestJS locally.
-- **Full Docker:** PostgreSQL + migrations + API all run in Compose.
+- **Local development:** PostgreSQL + Redis in Docker, NestJS/BullMQ locally through `npm run start:dev`.
+- **Full Docker:** PostgreSQL + Redis + migrations + API/workers all run through Compose.
 
 ### Full Docker mode
 
@@ -338,36 +411,30 @@ To run the entire stack through Docker instead of running Nest locally:
 docker compose up -d --build
 ```
 
-Compose starts PostgreSQL, waits for it to become healthy, applies committed Prisma migrations through the one-shot `migrate` service, and then starts the Docker API.
+Compose starts PostgreSQL and Redis, waits for them to become healthy, applies committed Prisma migrations through the one-shot `migrate` service, and then starts the Docker API/workers.
 
 In full Docker mode, do **not** also run `npm run start:dev`. The Docker API already owns host port `3000`.
 
-Docker containers use the Compose service hostname rather than the host-published port:
+Docker containers use Compose service hostnames rather than host-published ports:
 
 ```text
 postgresql://fintech:fintech_dev@postgres:5432/fintech?schema=public
+redis://redis:6379
 ```
 
-That is intentionally different from the local NestJS URL (`localhost:5433`). Do not change the Docker-internal URL to `localhost`.
+To switch back to local development, run `npm run start:dev`; the bootstrap stops the Compose API while retaining/starting the infrastructure containers.
 
-To switch back to local development, simply run:
-
-```bash
-npm run start:dev
-```
-
-The bootstrap step stops the Docker API, keeps/starts PostgreSQL, applies any pending migrations, and launches Nest locally.
-
-Service URLs when either API mode is running:
+Service URLs:
 
 - API: `http://localhost:3000`
 - Swagger UI: `http://localhost:3000/docs`
 - Liveness: `http://localhost:3000/api/v1/health/live`
-- Readiness: `http://localhost:3000/api/v1/health/ready`
+- PostgreSQL readiness: `http://localhost:3000/api/v1/health/ready`
+- Redis/BullMQ health: `http://localhost:3000/api/v1/health/async`
 
 ### Database migrations
 
-`npm run start:dev` runs `prisma migrate deploy` every time before Nest starts. This is safe and idempotent: Prisma records applied migrations in `_prisma_migrations`, applies only migrations that have not yet run, and reports `No pending migrations to apply` when the database is current.
+`npm run start:dev` runs `prisma migrate deploy` every time before Nest starts. Prisma records applied migrations in `_prisma_migrations`, applies only migrations that have not yet run, and reports `No pending migrations to apply` when the database is current.
 
 You can still invoke migrations manually when needed:
 
@@ -375,22 +442,24 @@ You can still invoke migrations manually when needed:
 npm run db:migrate:deploy
 ```
 
-The PostgreSQL container must be running for a host-side migration command to work.
+PostgreSQL must be running for a host-side migration command to work.
 
 ### Common startup errors
 
 | Error | Usually means | Fix |
 | --- | --- | --- |
-| `P1001: Can't reach database server at localhost:5433` | PostgreSQL is stopped | Run `npm run start:dev` or start it manually with `docker compose up -d --wait postgres` |
-| `P1000: Authentication failed` | Your `.env` does not match the Fintech database or you reached a different PostgreSQL instance | Confirm `DATABASE_URL` uses `fintech:fintech_dev@localhost:5433/fintech` and inspect `docker compose ps` |
-| `Can't reach database server at postgres:5432` | A Docker API/migration container was started without the Compose PostgreSQL service | Start the stack through `docker compose up -d --build` rather than running the API image by itself |
-| `EADDRINUSE ... 0.0.0.0:3000` | Another process already owns port `3000`, commonly the Docker API | `npm run start:dev` now stops the Compose API first; otherwise inspect the process using port `3000` |
+| `P1001: Can't reach database server at localhost:5433` | PostgreSQL is stopped | Run `npm run start:dev` or `docker compose up -d --wait postgres redis` |
+| `P1000: Authentication failed` | `.env` does not match the Fintech database or another PostgreSQL instance answered | Confirm the documented `DATABASE_URL` and inspect `docker compose ps` |
+| Redis/BullMQ connection refused | Redis is stopped or `REDIS_URL` points to the wrong host | Run `npm run start:dev` or start `redis` through Compose |
+| `Can't reach database server at postgres:5432` | A Docker API/migration container was started without its Compose PostgreSQL service | Start the stack with `docker compose up -d --build` |
+| `EADDRINUSE ... 0.0.0.0:3000` | Another process already owns port `3000`, commonly the Docker API | `npm run start:dev` stops the Compose API first; otherwise inspect the process using port `3000` |
 
 A quick health check after startup is:
 
 ```bash
 docker compose ps
 curl http://localhost:3000/api/v1/health/ready
+curl http://localhost:3000/api/v1/health/async
 ```
 
 ## Quality checks
@@ -406,14 +475,14 @@ npm run db:migrate:deploy
 npm run test:e2e
 ```
 
-GitHub Actions performs a production dependency audit, validates the Prisma schema, applies migrations against a real PostgreSQL service, runs PostgreSQL-backed domain E2E tests, validates the Compose definition, builds both migration and production container targets from the committed lockfile, and starts the compiled API to verify database readiness.
+GitHub Actions performs a production dependency audit, validates the Prisma schema, applies migrations against real PostgreSQL and Redis services, runs PostgreSQL-backed domain E2E tests including the transactional outbox flow, validates the Compose definition, builds both migration and production container targets from the committed lockfile, and starts the compiled API to verify both database and async health endpoints.
 
 ## Security and integrity baseline
 
 The rebuilt service follows these rules from the beginning:
 
 - required secrets fail validation instead of falling back to committed defaults;
-- the documented example JWT secret is explicitly rejected;
+- documented example JWT and webhook-signing secrets are explicitly rejected;
 - passwords are hashed with scrypt and plaintext passwords are never persisted;
 - JWT verification constrains algorithm, issuer, audience, expiry, and authenticated user existence;
 - authorization headers, cookies, idempotency keys, passwords, and token-like fields are redacted from structured logs;
@@ -433,12 +502,19 @@ The rebuilt service follows these rules from the beginning:
 - reversals are immutable compensating events and must reference an exact matching sealed opposite ledger transaction;
 - only the original transfer sender may own its reversal, and a transfer can be reversed at most once;
 - audit history is append-only and deferred database checks bind transfer/reversal audit events to their owning actor and resource;
+- successful transfers/reversals create guarded outbox rows in the same database transaction as their financial state;
+- outbox event identity/payload cannot be edited or deleted after commit;
+- BullMQ workers do not write ledger balances or decide whether a financial operation succeeded;
+- notification event data is immutable and owner-scoped;
+- outgoing webhooks use HTTPS, bounded timeouts, signed payloads, persisted delivery attempts, and retry backoff;
+- callback signing secrets are derived per endpoint from a required master secret and are not stored in plaintext in the endpoint table;
+- basic callback URL validation rejects local/private literal destinations; production hardening will additionally rely on controlled egress/DNS policy to address DNS rebinding and network-level SSRF;
 - beneficiaries are owner-scoped and soft-deleted so transfer history remains referentially intact;
 - raw card PAN/CVV/PIN handling will not be part of the rebuilt payment flow;
 - user-controlled values are not concatenated into SQL;
 - the production container runs as a non-root user and installs dependencies from the committed lockfile.
 
-The transaction-local ledger-write, transfer-write, reversal-write, and audit-write settings are application/database integrity guards against accidental bypasses by normal application code. They are not intended to be security boundaries against an administrator with full PostgreSQL privileges; a production deployment with that threat model would add database-role separation and tighter privilege controls.
+The transaction-local ledger-write, transfer-write, reversal-write, audit-write, and outbox-write settings are application/database integrity guards against accidental bypasses by normal application code. They are not intended to be security boundaries against an administrator with full PostgreSQL privileges; a production deployment with that threat model would add database-role separation and tighter privilege controls.
 
 ## Historical context
 
