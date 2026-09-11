@@ -10,12 +10,12 @@ on:
       - main
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   quality:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     env:
       NODE_ENV: test
       PORT: 3000
@@ -50,20 +50,8 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Install dependencies and synchronize lockfile
-        run: npm install --no-fund
-
-      - name: Commit dependency lockfile
-        if: github.ref == 'refs/heads/modernization/phase-2-identity-wallets' && github.event_name == 'push'
-        run: |
-          if git diff --quiet -- package-lock.json; then
-            exit 0
-          fi
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add package-lock.json
-          git commit -m 'chore: sync phase two dependency lockfile'
-          git push origin HEAD:modernization/phase-2-identity-wallets
+      - name: Install dependencies
+        run: npm ci --no-fund
 
       - name: Audit production dependencies
         run: npm audit --omit=dev --audit-level=high
@@ -74,9 +62,16 @@ jobs:
       - name: Quality gates
         run: npm run ci
 
+      - name: Apply database migrations
+        run: npm run db:migrate:deploy
+
+      - name: Identity and wallet e2e tests
+        run: npm run test:e2e
+
       - name: Validate container definitions
         run: |
           docker compose config --quiet
+          docker build --target migrate --tag fintech-migrate:ci .
           docker build --tag fintech-transaction-platform:ci .
 
       - name: Smoke test PostgreSQL readiness endpoint
