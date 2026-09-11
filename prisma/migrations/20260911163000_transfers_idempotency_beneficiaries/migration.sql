@@ -12,6 +12,7 @@ CREATE TABLE "Beneficiary" (
     "label" VARCHAR(80) NOT NULL,
     "createdAt" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMPTZ(3) NOT NULL,
+    "deletedAt" TIMESTAMPTZ(3),
 
     CONSTRAINT "Beneficiary_pkey" PRIMARY KEY ("id"),
     CONSTRAINT "Beneficiary_label_check" CHECK (char_length(btrim("label")) BETWEEN 1 AND 80 AND "label" = btrim("label"))
@@ -98,7 +99,7 @@ ALTER TABLE "Transfer" ADD CONSTRAINT "Transfer_sourceWalletId_fkey"
 ALTER TABLE "Transfer" ADD CONSTRAINT "Transfer_destinationWalletId_fkey"
   FOREIGN KEY ("destinationWalletId") REFERENCES "Wallet"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 ALTER TABLE "Transfer" ADD CONSTRAINT "Transfer_beneficiaryId_fkey"
-  FOREIGN KEY ("beneficiaryId") REFERENCES "Beneficiary"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+  FOREIGN KEY ("beneficiaryId") REFERENCES "Beneficiary"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 ALTER TABLE "Transfer" ADD CONSTRAINT "Transfer_ledgerTransactionId_fkey"
   FOREIGN KEY ("ledgerTransactionId") REFERENCES "LedgerTransaction"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
