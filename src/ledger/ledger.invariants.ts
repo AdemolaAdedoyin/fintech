@@ -22,6 +22,11 @@ export interface NormalizedLedgerTransactionInput {
 }
 
 const MAX_POSTINGS = 50;
+export const MAX_MINOR_UNITS = 9_223_372_036_854_775_807n;
+
+export function isSupportedMinorUnitValue(value: bigint): boolean {
+  return value >= -MAX_MINOR_UNITS && value <= MAX_MINOR_UNITS;
+}
 
 export function normalizeLedgerTransactionInput(
   input: LedgerTransactionInput,
@@ -58,6 +63,10 @@ export function normalizeLedgerTransactionInput(
 
     if (posting.amountMinor === 0n) {
       throw new BadRequestException('Ledger postings cannot have a zero amount');
+    }
+
+    if (!isSupportedMinorUnitValue(posting.amountMinor)) {
+      throw new BadRequestException('Ledger posting amount exceeds the supported BIGINT range');
     }
 
     if (accountIds.has(posting.accountId)) {
