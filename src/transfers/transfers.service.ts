@@ -33,8 +33,7 @@ interface ExistingIdempotencyRecord {
 }
 
 type TransferAttemptOutcome =
-  | { kind: 'success'; transfer: Transfer }
-  | { kind: 'failure'; status: number; message: string };
+  { kind: 'success'; transfer: Transfer } | { kind: 'failure'; status: number; message: string };
 
 interface NormalizedTransferRequest {
   sourceWalletId: string;
@@ -147,8 +146,13 @@ export class TransfersService {
               beneficiaryId = beneficiary.id;
               destinationWallet = beneficiary.wallet;
             } else {
+              const destinationWalletId = request.destinationWalletId;
+              if (!destinationWalletId) {
+                throw new InternalServerErrorException('Transfer destination was not resolved');
+              }
+
               const directDestination = await transaction.wallet.findUnique({
-                where: { id: request.destinationWalletId },
+                where: { id: destinationWalletId },
                 select: {
                   id: true,
                   ledgerAccountId: true,
@@ -320,12 +324,16 @@ export class TransfersService {
     const hasDestination = Boolean(input.destinationWalletId);
     const hasBeneficiary = Boolean(input.beneficiaryId);
     if (hasDestination === hasBeneficiary) {
-      throw new BadRequestException(
-        'Provide exactly one of destinationWalletId or beneficiaryId',
-      );
+      throw new BadRequestException('Provide exactly one of destinationWalletId or beneficiaryId');
     }
 
-    const amountMinor = BigInt(input.amountMinor);
+    let amountMinor: bigint;
+    try {
+      amountMinor = BigInt(input.amountMinor);
+    } catch {
+      throw new BadRequestException('amountMinor must be a positive integer string in minor units');
+    }
+
     if (amountMinor <= 0n || amountMinor > MAX_MINOR_UNITS) {
       throw new BadRequestException('amountMinor exceeds the supported BIGINT range');
     }
