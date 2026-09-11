@@ -308,9 +308,12 @@ describe('Ledger core (e2e)', () => {
       (await prisma.wallet.findUniqueOrThrow({ where: { id: wallet.id } })).currentBalanceMinor,
     ).toBe(MAX_MINOR_UNITS);
     expect(
-      (await prisma.ledgerAccount.findUniqueOrThrow({ where: { id: systemAccount.id } })).balanceMinor,
+      (await prisma.ledgerAccount.findUniqueOrThrow({ where: { id: systemAccount.id } }))
+        .balanceMinor,
     ).toBe(-MAX_MINOR_UNITS);
-    expect(await prisma.ledgerTransaction.count({ where: { reference: overflowReference } })).toBe(0);
+    expect(await prisma.ledgerTransaction.count({ where: { reference: overflowReference } })).toBe(
+      0,
+    );
   });
 
   it('serializes concurrent debits so a wallet cannot overspend', async () => {
