@@ -61,6 +61,11 @@ jobs:
       - name: Quality gates
         run: npm run ci
 
+      - name: Validate container definitions
+        run: |
+          docker compose config --quiet
+          docker build --tag fintech-transaction-platform:ci .
+
       - name: Smoke test PostgreSQL readiness endpoint
         shell: bash
         run: |
