@@ -52,7 +52,7 @@ export class LedgerService {
           throw new ConflictException('Ledger reference already exists');
         }
 
-        if (error.code === 'P2034') {
+        if (this.isSerializationConflict(error)) {
           throw new ConflictException('Concurrent ledger update detected; retry the operation');
         }
       }
@@ -186,5 +186,9 @@ export class LedgerService {
         },
       },
     });
+  }
+
+  private isSerializationConflict(error: Prisma.PrismaClientKnownRequestError): boolean {
+    return error.code === 'P2034' || (error.code === 'P2010' && error.meta?.code === '40001');
   }
 }
