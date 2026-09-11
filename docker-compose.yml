@@ -1,0 +1,36 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: fintech
+      POSTGRES_USER: fintech
+      POSTGRES_PASSWORD: fintech_dev
+    ports:
+      - '5432:5432'
+    volumes:
+      - fintech_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U fintech -d fintech']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      NODE_ENV: development
+      PORT: 3000
+      DATABASE_URL: postgresql://fintech:fintech_dev@postgres:5432/fintech?schema=public
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-development-only-secret-change-before-production}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:3000}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    ports:
+      - '3000:3000'
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  fintech_postgres_data:
