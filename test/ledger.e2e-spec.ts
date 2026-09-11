@@ -83,7 +83,9 @@ describe('Ledger core (e2e)', () => {
     expect(posted.postings.reduce((sum, posting) => sum + posting.amountMinor, 0n)).toBe(0n);
 
     const storedWallet = await prisma.wallet.findUniqueOrThrow({ where: { id: wallet.id } });
-    const storedAccount = await prisma.ledgerAccount.findUniqueOrThrow({ where: { id: account.id } });
+    const storedAccount = await prisma.ledgerAccount.findUniqueOrThrow({
+      where: { id: account.id },
+    });
     const clearingAfter = await prisma.ledgerAccount.findUniqueOrThrow({
       where: { id: clearingBefore.id },
     });
@@ -94,7 +96,7 @@ describe('Ledger core (e2e)', () => {
 
     await expect(
       prisma.ledgerPosting.update({
-        where: { id: posted.postings[0]!.id },
+        where: { id: posted.postings[0].id },
         data: { amountMinor: 1n },
       }),
     ).rejects.toThrow();
@@ -137,9 +139,7 @@ describe('Ledger core (e2e)', () => {
       }),
     ).rejects.toBeInstanceOf(BadRequestException);
 
-    expect(
-      await prisma.ledgerTransaction.count({ where: { reference: ledgerReference } }),
-    ).toBe(0);
+    expect(await prisma.ledgerTransaction.count({ where: { reference: ledgerReference } })).toBe(0);
   });
 
   it('enforces balance and currency rules without partial writes', async () => {
@@ -171,7 +171,9 @@ describe('Ledger core (e2e)', () => {
       }),
     ).rejects.toBeInstanceOf(BadRequestException);
 
-    const accountAfter = await prisma.ledgerAccount.findUniqueOrThrow({ where: { id: account.id } });
+    const accountAfter = await prisma.ledgerAccount.findUniqueOrThrow({
+      where: { id: account.id },
+    });
     expect(accountAfter.balanceMinor).toBe(0n);
     expect(
       await prisma.ledgerTransaction.count({
@@ -219,9 +221,7 @@ describe('Ledger core (e2e)', () => {
       ),
     ).rejects.toThrow();
 
-    expect(
-      await prisma.ledgerTransaction.count({ where: { reference: ledgerReference } }),
-    ).toBe(0);
+    expect(await prisma.ledgerTransaction.count({ where: { reference: ledgerReference } })).toBe(0);
   });
 
   it('serializes concurrent debits so a wallet cannot overspend', async () => {
@@ -255,7 +255,9 @@ describe('Ledger core (e2e)', () => {
     expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1);
 
     const walletAfter = await prisma.wallet.findUniqueOrThrow({ where: { id: wallet.id } });
-    const accountAfter = await prisma.ledgerAccount.findUniqueOrThrow({ where: { id: account.id } });
+    const accountAfter = await prisma.ledgerAccount.findUniqueOrThrow({
+      where: { id: account.id },
+    });
     expect(walletAfter.currentBalanceMinor).toBe(20n);
     expect(accountAfter.balanceMinor).toBe(20n);
     expect(
