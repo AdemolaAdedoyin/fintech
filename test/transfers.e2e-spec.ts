@@ -45,8 +45,9 @@ describe('Transfers, idempotency, and beneficiaries (e2e)', () => {
   let prisma: PrismaService;
   let ledger: LedgerService;
 
-  const runId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  const email = (label: string) => `${runId}-${label}-${randomUUID()}@example.com`;
+  const runId = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+  const email = (label: string) =>
+    `${label.slice(0, 12)}-${runId}-${randomUUID().slice(0, 8)}@example.com`;
   const reference = (label: string) => `${runId}:${label}:${randomUUID()}`;
 
   beforeAll(async () => {
