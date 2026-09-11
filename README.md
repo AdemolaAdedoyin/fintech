@@ -134,9 +134,11 @@ Because JavaScript numbers cannot safely represent every 64-bit integer, public 
 
 - Node.js 22+
 - npm 10+
-- Docker Desktop (recommended)
+- Docker Desktop
 
-### Environment
+PostgreSQL is expected to run in Docker for local development. The NestJS API can either run locally in watch mode or run inside Docker, but avoid running both API processes on port `3000` at the same time.
+
+### 1. Create the environment file
 
 ```bash
 cp .env.example .env
@@ -144,28 +146,194 @@ cp .env.example .env
 
 Replace `JWT_ACCESS_SECRET` with a private random value of at least 32 characters. The application rejects both weak secrets and the documented example placeholder. `JWT_ACCESS_TTL_SECONDS` defaults to 900 seconds.
 
-### Run with Docker Compose
+The default local database URL is:
 
-```bash
-docker compose up --build
+```env
+DATABASE_URL=postgresql://fintech:fintech_dev@localhost:5432/fintech?schema=public
 ```
 
-Compose starts PostgreSQL, applies committed Prisma migrations through the one-shot `migrate` service, and only then starts the API.
+The hostname is intentionally different depending on where the API runs:
+
+- API running directly on your machine: use `localhost:<published-postgres-port>`.
+- API running in Docker Compose: Compose injects `postgresql://fintech:fintech_dev@postgres:5432/fintech?schema=public` because `postgres` is the Docker service name.
+
+Do not replace the Docker-internal `postgres:5432` URL with `localhost`.
+
+### Recommended development mode: PostgreSQL in Docker, NestJS locally
+
+This is the recommended workflow while actively coding because Nest runs in watch mode and PostgreSQL stays isolated in Docker.
+
+Install dependencies first:
+
+```bash
+npm ci
+npm run prisma:generate
+```
+
+Start only PostgreSQL in detached mode:
+
+```bash
+docker compose up -d postgres
+```
+
+Verify that it is running and healthy:
+
+```bash
+docker compose ps
+```
+
+You should see the `postgres` service as `Up ... (healthy)`. PostgreSQL must remain running while the local Nest application is using it.
+
+Apply committed migrations on first setup, after pulling new migrations, or after resetting the database:
+
+```bash
+npm run db:migrate:deploy
+```
+
+Then start Nest locally:
+
+```bash
+npm run start:dev
+```
+
+The local development topology is:
+
+```text
+Host machine
+├── NestJS API                 localhost:3000
+│
+└── Docker
+    └── PostgreSQL             localhost:5432 -> container:5432
+```
+
+Stopping `npm run start:dev` does not need to stop PostgreSQL. Because PostgreSQL was started with `-d`, it continues running until you explicitly stop the service or bring the Compose project down.
+
+Useful commands:
+
+```bash
+# Stop only the database
+docker compose stop postgres
+
+# Start it again
+docker compose start postgres
+
+# Stop and remove the Compose containers/network while preserving the named database volume
+docker compose down
+```
+
+Do not use `docker compose down -v` unless you intentionally want to delete the local PostgreSQL volume and all local database data.
+
+### Full Docker mode
+
+To run PostgreSQL, migrations, and the API entirely through Docker Compose:
+
+```bash
+docker compose up -d --build
+```
+
+Compose starts PostgreSQL, waits for it to become healthy, runs committed Prisma migrations through the one-shot `migrate` service, and then starts the API.
+
+In this mode, do **not** also run:
+
+```bash
+npm run start:dev
+```
+
+The Docker API already binds host port `3000`, so starting another Nest process locally will fail with `EADDRINUSE: address already in use 0.0.0.0:3000`.
+
+To switch from full Docker mode back to local Nest development without stopping PostgreSQL:
+
+```bash
+docker compose stop api
+npm run start:dev
+```
+
+To watch Docker logs:
+
+```bash
+docker compose logs -f postgres
+docker compose logs -f api
+```
+
+Service URLs when the API is running:
 
 - API: `http://localhost:3000`
 - Swagger UI: `http://localhost:3000/docs`
 - Liveness: `http://localhost:3000/api/v1/health/live`
 - Readiness: `http://localhost:3000/api/v1/health/ready`
-- PostgreSQL: `localhost:5432` (bound to the local host only)
 
-### Run the API locally with PostgreSQL in Docker
+### If host port 5432 is already in use
+
+A local PostgreSQL installation or another Docker container may already own port `5432`. Check with:
 
 ```bash
-docker compose up postgres -d
-npm ci
-npm run prisma:generate
+lsof -nP -iTCP:5432 -sTCP:LISTEN
+```
+
+If port `5432` is occupied, publish this project's Postgres service on another host port such as `5433`:
+
+```yaml
+# docker-compose.yml
+services:
+  postgres:
+    ports:
+      - '127.0.0.1:5433:5432'
+```
+
+Then update only the host-side `.env` connection string:
+
+```env
+DATABASE_URL=postgresql://fintech:fintech_dev@localhost:5433/fintech?schema=public
+```
+
+Recreate/start PostgreSQL and confirm the published port:
+
+```bash
+docker compose up -d postgres
+docker compose port postgres 5432
+docker compose ps
+```
+
+Expected port output in this example:
+
+```text
+127.0.0.1:5433
+```
+
+The Docker API and migration services should still use `postgres:5432`; only applications running on the host use `localhost:5433`.
+
+### Database migrations
+
+You do not need to apply migrations every time the API starts. Run the deployment command when setting up a fresh database, after pulling a commit that adds a migration, or after intentionally resetting the local database:
+
+```bash
 npm run db:migrate:deploy
-npm run start:dev
+```
+
+Prisma records applied migrations in the database and safely reports `No pending migrations to apply` when the database is current.
+
+If Prisma says `No migration found in prisma/migrations`, verify that your local checkout actually contains the committed migration directories and that your branch is up to date:
+
+```bash
+ls prisma/migrations
+git fetch origin
+git pull --ff-only origin main
+```
+
+### Common startup errors
+
+| Error | Usually means | Fix |
+| --- | --- | --- |
+| `P1001: Can't reach database server at localhost:<port>` | PostgreSQL is stopped or `.env` points at the wrong published port | Start it with `docker compose up -d postgres`, then verify with `docker compose ps` and `docker compose port postgres 5432` |
+| `P1000: Authentication failed` | The credentials do not match the database you actually reached, often because another Postgres instance owns the host port or an old volume was initialized with different credentials | Verify the published port, `.env`, and container credentials before resetting anything |
+| `Can't reach database server at postgres:5432` | A Docker API/migration container cannot reach the Compose Postgres service, or an API image was started by itself outside Compose | Start the stack with `docker compose up -d --build` rather than running the API container alone |
+| `EADDRINUSE ... 0.0.0.0:3000` | The Docker API is already using port `3000` while `npm run start:dev` is trying to use it too | Use one API mode at a time, or `docker compose stop api` before starting Nest locally |
+
+A quick local-development health check is:
+
+```bash
+docker compose ps
+curl http://localhost:3000/api/v1/health/ready
 ```
 
 ## Quality checks
