@@ -37,7 +37,7 @@ model Wallet {
   currentBalanceMinor BigInt       @default(0)
   createdAt           DateTime     @default(now()) @db.Timestamptz(3)
   updatedAt           DateTime     @updatedAt @db.Timestamptz(3)
-  user                User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user                User         @relation(fields: [userId], references: [id], onDelete: Restrict)
 
   @@unique([userId, currency])
   @@index([userId])
