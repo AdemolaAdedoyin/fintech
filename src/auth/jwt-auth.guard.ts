@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
+import { JWT_AUDIENCE, JWT_ISSUER } from './auth.constants';
 import type { AuthenticatedRequest, AccessTokenPayload } from './auth.types';
 import { UsersService } from '../users/users.service';
 
@@ -25,6 +26,8 @@ export class JwtAuthGuard implements CanActivate {
       const payload = await this.jwtService.verifyAsync<AccessTokenPayload>(token, {
         secret: this.config.getOrThrow<string>('JWT_ACCESS_SECRET'),
         algorithms: ['HS256'],
+        issuer: JWT_ISSUER,
+        audience: JWT_AUDIENCE,
       });
 
       if (payload.type !== 'access' || !payload.sub) {
