@@ -14,6 +14,7 @@ async function bootstrap(): Promise<void> {
   const config = app.get(ConfigService);
 
   app.useLogger(app.get(Logger));
+  app.enableShutdownHooks();
   app.use(helmet());
   app.setGlobalPrefix('api/v1');
   app.useGlobalPipes(
