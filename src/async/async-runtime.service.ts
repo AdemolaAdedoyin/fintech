@@ -1,11 +1,6 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import {
-  OutboxEventType,
-  Prisma,
-  WebhookDeliveryStatus,
-  type OutboxEvent,
-} from '@prisma/client';
+import { OutboxEventType, Prisma, WebhookDeliveryStatus, type OutboxEvent } from '@prisma/client';
 import { Job, Queue, Worker } from 'bullmq';
 import { PrismaService } from '../prisma/prisma.service';
 import {

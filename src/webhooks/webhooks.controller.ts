@@ -26,10 +26,7 @@ export class WebhooksController {
   @ApiOperation({
     summary: 'Register an HTTPS webhook endpoint and return its signing secret once',
   })
-  createEndpoint(
-    @CurrentUser() user: AuthenticatedUser,
-    @Body() input: CreateWebhookEndpointDto,
-  ) {
+  createEndpoint(@CurrentUser() user: AuthenticatedUser, @Body() input: CreateWebhookEndpointDto) {
     return this.webhooks.createEndpoint(user.id, input);
   }
 

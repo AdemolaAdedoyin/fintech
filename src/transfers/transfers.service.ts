@@ -35,8 +35,7 @@ interface ExistingIdempotencyRecord {
 }
 
 type TransferAttemptOutcome =
-  | { kind: 'success'; transfer: Transfer }
-  | { kind: 'failure'; status: number; message: string };
+  { kind: 'success'; transfer: Transfer } | { kind: 'failure'; status: number; message: string };
 
 interface NormalizedTransferRequest {
   sourceWalletId: string;
