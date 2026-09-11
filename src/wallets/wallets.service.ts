@@ -1,5 +1,5 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { Currency, Prisma, WalletStatus } from '@prisma/client';
+import { Currency, LedgerAccountKind, Prisma, WalletStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { toWalletResponse } from './wallet.mapper';
 
@@ -9,8 +9,21 @@ export class WalletsService {
 
   async create(userId: string, currency: Currency) {
     try {
-      const wallet = await this.prisma.wallet.create({
-        data: { userId, currency },
+      const wallet = await this.prisma.$transaction(async (transaction) => {
+        const ledgerAccount = await transaction.ledgerAccount.create({
+          data: {
+            kind: LedgerAccountKind.WALLET,
+            currency,
+          },
+        });
+
+        return transaction.wallet.create({
+          data: {
+            userId,
+            ledgerAccountId: ledgerAccount.id,
+            currency,
+          },
+        });
       });
 
       return toWalletResponse(wallet);
@@ -50,16 +63,42 @@ export class WalletsService {
   async close(userId: string, walletId: string) {
     const wallet = await this.prisma.$transaction(
       async (transaction) => {
-        const current = await transaction.wallet.findFirst({
+        const target = await transaction.wallet.findFirst({
           where: {
             id: walletId,
             userId,
           },
+          select: {
+            id: true,
+            ledgerAccountId: true,
+          },
         });
 
-        if (!current) {
+        if (!target) {
           throw new NotFoundException('Wallet not found');
         }
+
+        await transaction.$queryRaw(
+          Prisma.sql`
+            SELECT "id"
+            FROM "LedgerAccount"
+            WHERE "id" = ${target.ledgerAccountId}::uuid
+            FOR UPDATE
+          `,
+        );
+
+        await transaction.$queryRaw(
+          Prisma.sql`
+            SELECT "id"
+            FROM "Wallet"
+            WHERE "id" = ${target.id}::uuid
+            FOR UPDATE
+          `,
+        );
+
+        const current = await transaction.wallet.findUniqueOrThrow({
+          where: { id: target.id },
+        });
 
         if (current.status === WalletStatus.CLOSED) {
           return current;
@@ -78,7 +117,7 @@ export class WalletsService {
           data: { status: WalletStatus.CLOSED },
         });
       },
-      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted },
     );
 
     return toWalletResponse(wallet);

@@ -65,7 +65,7 @@ jobs:
       - name: Apply database migrations
         run: npm run db:migrate:deploy
 
-      - name: Identity and wallet e2e tests
+      - name: Domain e2e tests
         run: npm run test:e2e
 
       - name: Validate container definitions
