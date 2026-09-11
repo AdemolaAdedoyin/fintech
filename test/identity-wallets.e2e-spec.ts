@@ -1,6 +1,7 @@
 import { HttpStatus, INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { Currency, WalletStatus } from '@prisma/client';
+import type { Server } from 'node:http';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
@@ -27,6 +28,7 @@ interface AuthBody {
 
 describe('Identity and wallets (e2e)', () => {
   let app: INestApplication;
+  let httpServer: Server;
   let prisma: PrismaService;
 
   beforeAll(async () => {
@@ -51,6 +53,7 @@ describe('Identity and wallets (e2e)', () => {
     );
     await app.init();
 
+    httpServer = app.getHttpServer<Server>();
     prisma = app.get(PrismaService);
   });
 
@@ -64,7 +67,7 @@ describe('Identity and wallets (e2e)', () => {
   });
 
   async function register(email: string, currency: Currency = Currency.USD) {
-    const response = await request(app.getHttpServer())
+    const response = await request(httpServer)
       .post('/api/v1/auth/register')
       .send({
         email,
@@ -104,7 +107,7 @@ describe('Identity and wallets (e2e)', () => {
   it('enforces canonical unique email identity and strict input validation', async () => {
     await register('alex@example.com');
 
-    await request(app.getHttpServer())
+    await request(httpServer)
       .post('/api/v1/auth/register')
       .send({
         email: 'ALEX@EXAMPLE.COM',
@@ -114,7 +117,7 @@ describe('Identity and wallets (e2e)', () => {
       })
       .expect(HttpStatus.CONFLICT);
 
-    await request(app.getHttpServer())
+    await request(httpServer)
       .post('/api/v1/auth/register')
       .send({
         email: 'new@example.com',
@@ -129,18 +132,18 @@ describe('Identity and wallets (e2e)', () => {
   it('authenticates with a short-lived bearer token and returns the current profile', async () => {
     await register('alex@example.com');
 
-    await request(app.getHttpServer())
+    await request(httpServer)
       .post('/api/v1/auth/login')
       .send({ email: 'alex@example.com', password: 'wrong-password' })
       .expect(HttpStatus.UNAUTHORIZED);
 
-    const loginResponse = await request(app.getHttpServer())
+    const loginResponse = await request(httpServer)
       .post('/api/v1/auth/login')
       .send({ email: 'ALEX@example.com', password: 'correct-horse-battery-staple' })
       .expect(HttpStatus.OK);
     const loginBody = loginResponse.body as AuthBody;
 
-    const profileResponse = await request(app.getHttpServer())
+    const profileResponse = await request(httpServer)
       .get('/api/v1/auth/me')
       .set('Authorization', `Bearer ${loginBody.accessToken}`)
       .expect(HttpStatus.OK);
@@ -164,12 +167,12 @@ describe('Identity and wallets (e2e)', () => {
       throw new Error('Registration did not return an initial wallet');
     }
 
-    await request(app.getHttpServer())
+    await request(httpServer)
       .get(`/api/v1/wallets/${aliceWallet.id}`)
       .set('Authorization', `Bearer ${bob.accessToken}`)
       .expect(HttpStatus.NOT_FOUND);
 
-    await request(app.getHttpServer())
+    await request(httpServer)
       .get(`/api/v1/wallets/${aliceWallet.id}`)
       .set('Authorization', `Bearer ${alice.accessToken}`)
       .expect(HttpStatus.OK);
@@ -178,7 +181,7 @@ describe('Identity and wallets (e2e)', () => {
   it('supports one wallet per currency and an explicit zero-balance close lifecycle', async () => {
     const account = await register('alex@example.com');
 
-    const createdResponse = await request(app.getHttpServer())
+    const createdResponse = await request(httpServer)
       .post('/api/v1/wallets')
       .set('Authorization', `Bearer ${account.accessToken}`)
       .send({ currency: Currency.NGN })
@@ -187,7 +190,7 @@ describe('Identity and wallets (e2e)', () => {
 
     expect(ngnWallet.currentBalanceMinor).toBe('0');
 
-    await request(app.getHttpServer())
+    await request(httpServer)
       .post('/api/v1/wallets')
       .set('Authorization', `Bearer ${account.accessToken}`)
       .send({ currency: Currency.NGN })
@@ -198,7 +201,7 @@ describe('Identity and wallets (e2e)', () => {
       data: { currentBalanceMinor: 1n },
     });
 
-    await request(app.getHttpServer())
+    await request(httpServer)
       .post(`/api/v1/wallets/${ngnWallet.id}/close`)
       .set('Authorization', `Bearer ${account.accessToken}`)
       .expect(HttpStatus.CONFLICT);
@@ -208,14 +211,14 @@ describe('Identity and wallets (e2e)', () => {
       data: { currentBalanceMinor: 0n },
     });
 
-    const closeResponse = await request(app.getHttpServer())
+    const closeResponse = await request(httpServer)
       .post(`/api/v1/wallets/${ngnWallet.id}/close`)
       .set('Authorization', `Bearer ${account.accessToken}`)
       .expect(HttpStatus.OK);
 
     expect((closeResponse.body as WalletBody).status).toBe(WalletStatus.CLOSED);
 
-    const listResponse = await request(app.getHttpServer())
+    const listResponse = await request(httpServer)
       .get('/api/v1/wallets')
       .set('Authorization', `Bearer ${account.accessToken}`)
       .expect(HttpStatus.OK);
