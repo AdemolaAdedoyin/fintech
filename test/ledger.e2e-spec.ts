@@ -3,6 +3,7 @@ import { Test } from '@nestjs/testing';
 import { Currency, LedgerAccountKind, Prisma } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import { AppModule } from '../src/app.module';
+import { MAX_MINOR_UNITS } from '../src/ledger/ledger.invariants';
 import { LedgerService } from '../src/ledger/ledger.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 
@@ -182,6 +183,46 @@ describe('Ledger core (e2e)', () => {
     ).toBe(0);
   });
 
+  it('rejects direct ledger history writes outside the ledger write context', async () => {
+    const { account, wallet } = await createWallet(Currency.USD);
+    const clearing = await ledger.getExternalClearingAccount(Currency.USD);
+    const ledgerReference = reference('direct-write-guard');
+
+    await expect(
+      prisma.$transaction(async (transaction) => {
+        const record = await transaction.ledgerTransaction.create({
+          data: {
+            reference: ledgerReference,
+            currency: Currency.USD,
+          },
+        });
+
+        await transaction.ledgerPosting.createMany({
+          data: [
+            {
+              ledgerTransactionId: record.id,
+              accountId: clearing.id,
+              amountMinor: -100n,
+            },
+            {
+              ledgerTransactionId: record.id,
+              accountId: account.id,
+              amountMinor: 100n,
+            },
+          ],
+        });
+      }),
+    ).rejects.toThrow();
+
+    expect(await prisma.ledgerTransaction.count({ where: { reference: ledgerReference } })).toBe(0);
+    expect((await prisma.ledgerAccount.findUniqueOrThrow({ where: { id: account.id } })).balanceMinor).toBe(
+      0n,
+    );
+    expect((await prisma.wallet.findUniqueOrThrow({ where: { id: wallet.id } })).currentBalanceMinor).toBe(
+      0n,
+    );
+  });
+
   it('rejects an unbalanced transaction at the database commit boundary too', async () => {
     const { account } = await createWallet(Currency.USD);
     const clearing = await ledger.getExternalClearingAccount(Currency.USD);
@@ -190,6 +231,10 @@ describe('Ledger core (e2e)', () => {
     await expect(
       prisma.$transaction(
         async (transaction) => {
+          await transaction.$queryRaw(
+            Prisma.sql`SELECT set_config('app.ledger_write', 'on', true)`,
+          );
+
           const record = await transaction.ledgerTransaction.create({
             data: {
               reference: ledgerReference,
@@ -222,6 +267,50 @@ describe('Ledger core (e2e)', () => {
     ).rejects.toThrow();
 
     expect(await prisma.ledgerTransaction.count({ where: { reference: ledgerReference } })).toBe(0);
+  });
+
+  it('rejects postings that would overflow a ledger balance snapshot', async () => {
+    const { account, wallet } = await createWallet(Currency.USD);
+    const systemAccount = await prisma.ledgerAccount.create({
+      data: {
+        kind: LedgerAccountKind.SYSTEM,
+        currency: Currency.USD,
+        allowNegative: true,
+        systemKey: `test-range:${runId}:${randomUUID()}`,
+      },
+    });
+
+    await ledger.post({
+      reference: reference('range-fund'),
+      currency: Currency.USD,
+      postings: [
+        { accountId: systemAccount.id, amountMinor: -MAX_MINOR_UNITS },
+        { accountId: account.id, amountMinor: MAX_MINOR_UNITS },
+      ],
+    });
+
+    const overflowReference = reference('range-overflow');
+    await expect(
+      ledger.post({
+        reference: overflowReference,
+        currency: Currency.USD,
+        postings: [
+          { accountId: systemAccount.id, amountMinor: -1n },
+          { accountId: account.id, amountMinor: 1n },
+        ],
+      }),
+    ).rejects.toBeInstanceOf(ConflictException);
+
+    expect((await prisma.ledgerAccount.findUniqueOrThrow({ where: { id: account.id } })).balanceMinor).toBe(
+      MAX_MINOR_UNITS,
+    );
+    expect((await prisma.wallet.findUniqueOrThrow({ where: { id: wallet.id } })).currentBalanceMinor).toBe(
+      MAX_MINOR_UNITS,
+    );
+    expect(
+      (await prisma.ledgerAccount.findUniqueOrThrow({ where: { id: systemAccount.id } })).balanceMinor,
+    ).toBe(-MAX_MINOR_UNITS);
+    expect(await prisma.ledgerTransaction.count({ where: { reference: overflowReference } })).toBe(0);
   });
 
   it('serializes concurrent debits so a wallet cannot overspend', async () => {
