@@ -4,6 +4,7 @@ import { Currency, WalletStatus } from '@prisma/client';
 import type { Server } from 'node:http';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
+import { LedgerService } from '../src/ledger/ledger.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 
 interface WalletBody {
@@ -30,13 +31,18 @@ describe('Identity and wallets (e2e)', () => {
   let app: INestApplication;
   let httpServer: Server;
   let prisma: PrismaService;
+  let ledger: LedgerService;
+
+  const runId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const email = (label: string) => `${runId}-${label}@example.com`;
+  const reference = (label: string) => `${runId}:${label}`;
 
   beforeAll(async () => {
     process.env.NODE_ENV = 'test';
     process.env.DATABASE_URL ??=
       'postgresql://fintech:fintech_dev@localhost:5432/fintech?schema=public';
     process.env.JWT_ACCESS_SECRET =
-      'phase-two-e2e-secret-that-is-longer-than-thirty-two-characters';
+      'phase-three-e2e-secret-that-is-longer-than-thirty-two-characters';
     process.env.JWT_ACCESS_TTL_SECONDS = '900';
     process.env.CORS_ORIGIN = 'http://localhost:3000';
     process.env.LOG_LEVEL = 'silent';
@@ -55,22 +61,18 @@ describe('Identity and wallets (e2e)', () => {
 
     httpServer = app.getHttpServer() as Server;
     prisma = app.get(PrismaService);
-  });
-
-  beforeEach(async () => {
-    await prisma.wallet.deleteMany();
-    await prisma.user.deleteMany();
+    ledger = app.get(LedgerService);
   });
 
   afterAll(async () => {
     await app.close();
   });
 
-  async function register(email: string, currency: Currency = Currency.USD) {
+  async function register(accountEmail: string, currency: Currency = Currency.USD) {
     const response = await request(httpServer)
       .post('/api/v1/auth/register')
       .send({
-        email,
+        email: accountEmail,
         password: 'correct-horse-battery-staple',
         firstName: 'Alex',
         lastName: 'Morgan',
@@ -81,13 +83,14 @@ describe('Identity and wallets (e2e)', () => {
     return response.body as AuthBody;
   }
 
-  it('registers a user and initial zero-balance wallet atomically', async () => {
-    const body = await register('  ALEX@example.com  ');
+  it('registers a user, ledger account, and initial zero-balance wallet atomically', async () => {
+    const accountEmail = email('atomic');
+    const body = await register(`  ${accountEmail.toUpperCase()}  `);
 
     expect(body.accessToken).toEqual(expect.any(String));
     expect(body.tokenType).toBe('Bearer');
     expect(body.expiresIn).toBe(900);
-    expect(body.user.email).toBe('alex@example.com');
+    expect(body.user.email).toBe(accountEmail);
     expect(body.initialWallet).toEqual(
       expect.objectContaining({
         currency: Currency.USD,
@@ -97,22 +100,33 @@ describe('Identity and wallets (e2e)', () => {
     );
     expect(JSON.stringify(body)).not.toContain('passwordHash');
 
-    const user = await prisma.user.findUnique({ where: { email: 'alex@example.com' } });
+    const user = await prisma.user.findUnique({ where: { email: accountEmail } });
     expect(user?.passwordHash).toMatch(/^scrypt\$/);
     expect(user?.passwordHash).not.toBe('correct-horse-battery-staple');
-    expect(await prisma.user.count()).toBe(1);
-    expect(await prisma.wallet.count()).toBe(1);
+    expect(await prisma.wallet.count({ where: { userId: body.user.id } })).toBe(1);
+
+    const wallet = await prisma.wallet.findFirstOrThrow({ where: { userId: body.user.id } });
+    const ledgerAccount = await prisma.ledgerAccount.findUnique({
+      where: { id: wallet.ledgerAccountId },
+    });
+    expect(ledgerAccount).toEqual(
+      expect.objectContaining({
+        currency: Currency.USD,
+        balanceMinor: 0n,
+      }),
+    );
 
     await expect(prisma.user.delete({ where: { id: body.user.id } })).rejects.toThrow();
   });
 
   it('enforces canonical unique email identity and strict input validation', async () => {
-    await register('alex@example.com');
+    const accountEmail = email('canonical');
+    await register(accountEmail);
 
     await request(httpServer)
       .post('/api/v1/auth/register')
       .send({
-        email: 'ALEX@EXAMPLE.COM',
+        email: accountEmail.toUpperCase(),
         password: 'another-secure-password',
         firstName: 'Other',
         lastName: 'Person',
@@ -122,7 +136,7 @@ describe('Identity and wallets (e2e)', () => {
     await request(httpServer)
       .post('/api/v1/auth/register')
       .send({
-        email: 'new@example.com',
+        email: email('unknown-field'),
         password: 'another-secure-password',
         firstName: 'Other',
         lastName: 'Person',
@@ -133,7 +147,7 @@ describe('Identity and wallets (e2e)', () => {
     await expect(
       prisma.user.create({
         data: {
-          email: 'UPPERCASE@example.com',
+          email: `UPPERCASE-${runId}@example.com`,
           passwordHash: 'not-used-by-this-constraint-test',
           firstName: 'Direct',
           lastName: 'Database',
@@ -143,21 +157,22 @@ describe('Identity and wallets (e2e)', () => {
   });
 
   it('authenticates with a short-lived bearer token and returns the current profile', async () => {
-    await register('alex@example.com');
+    const accountEmail = email('login');
+    await register(accountEmail);
 
     await request(httpServer)
       .post('/api/v1/auth/login')
-      .send({ email: 'alex@example.com', password: 'wrong-password' })
+      .send({ email: accountEmail, password: 'wrong-password' })
       .expect(HttpStatus.UNAUTHORIZED);
 
     await request(httpServer)
       .post('/api/v1/auth/login')
-      .send({ email: 'missing@example.com', password: 'wrong-password' })
+      .send({ email: email('missing'), password: 'wrong-password' })
       .expect(HttpStatus.UNAUTHORIZED);
 
     const loginResponse = await request(httpServer)
       .post('/api/v1/auth/login')
-      .send({ email: 'ALEX@example.com', password: 'correct-horse-battery-staple' })
+      .send({ email: accountEmail.toUpperCase(), password: 'correct-horse-battery-staple' })
       .expect(HttpStatus.OK);
     const loginBody = loginResponse.body as AuthBody;
 
@@ -169,7 +184,7 @@ describe('Identity and wallets (e2e)', () => {
     expect(profileResponse.body).toEqual(
       expect.objectContaining({
         id: loginBody.user.id,
-        email: 'alex@example.com',
+        email: accountEmail,
         firstName: 'Alex',
         lastName: 'Morgan',
       }),
@@ -177,8 +192,8 @@ describe('Identity and wallets (e2e)', () => {
   });
 
   it('scopes wallet access to the authenticated owner', async () => {
-    const alice = await register('alice@example.com');
-    const bob = await register('bob@example.com');
+    const alice = await register(email('alice'));
+    const bob = await register(email('bob'));
     const aliceWallet = alice.initialWallet;
 
     if (!aliceWallet) {
@@ -197,7 +212,7 @@ describe('Identity and wallets (e2e)', () => {
   });
 
   it('supports one wallet per currency and an explicit zero-balance close lifecycle', async () => {
-    const account = await register('alex@example.com');
+    const account = await register(email('wallet-lifecycle'));
 
     const createdResponse = await request(httpServer)
       .post('/api/v1/wallets')
@@ -214,16 +229,16 @@ describe('Identity and wallets (e2e)', () => {
       .send({ currency: Currency.NGN })
       .expect(HttpStatus.CONFLICT);
 
-    await expect(
-      prisma.wallet.update({
-        where: { id: ngnWallet.id },
-        data: { currentBalanceMinor: -1n },
-      }),
-    ).rejects.toThrow();
+    const storedWallet = await prisma.wallet.findUniqueOrThrow({ where: { id: ngnWallet.id } });
+    const clearing = await ledger.getExternalClearingAccount(Currency.NGN);
 
-    await prisma.wallet.update({
-      where: { id: ngnWallet.id },
-      data: { currentBalanceMinor: 1n },
+    await ledger.post({
+      reference: reference('wallet-lifecycle-credit'),
+      currency: Currency.NGN,
+      postings: [
+        { accountId: clearing.id, amountMinor: -1n },
+        { accountId: storedWallet.ledgerAccountId, amountMinor: 1n },
+      ],
     });
 
     await request(httpServer)
@@ -231,9 +246,13 @@ describe('Identity and wallets (e2e)', () => {
       .set('Authorization', `Bearer ${account.accessToken}`)
       .expect(HttpStatus.CONFLICT);
 
-    await prisma.wallet.update({
-      where: { id: ngnWallet.id },
-      data: { currentBalanceMinor: 0n },
+    await ledger.post({
+      reference: reference('wallet-lifecycle-debit'),
+      currency: Currency.NGN,
+      postings: [
+        { accountId: storedWallet.ledgerAccountId, amountMinor: -1n },
+        { accountId: clearing.id, amountMinor: 1n },
+      ],
     });
 
     const closeResponse = await request(httpServer)
