@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException, INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { Currency, LedgerAccountKind, Prisma } from '@prisma/client';
+import { randomUUID } from 'node:crypto';
 import { AppModule } from '../src/app.module';
 import { LedgerService } from '../src/ledger/ledger.service';
 import { PrismaService } from '../src/prisma/prisma.service';
@@ -39,7 +40,7 @@ describe('Ledger core (e2e)', () => {
     return prisma.$transaction(async (transaction) => {
       const user = await transaction.user.create({
         data: {
-          email: `${runId}-${crypto.randomUUID()}@example.com`,
+          email: `${runId}-${randomUUID()}@example.com`,
           passwordHash: 'test-only-password-hash',
           firstName: 'Ledger',
           lastName: 'Test',
