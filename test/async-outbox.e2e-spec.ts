@@ -259,9 +259,7 @@ describe('Transactional outbox and async delivery (e2e)', () => {
       .set('Authorization', `Bearer ${user.accessToken}`)
       .expect(HttpStatus.OK);
     expect(listResponse.body).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ id: endpointId, enabled: true }),
-      ]),
+      expect.arrayContaining([expect.objectContaining({ id: endpointId, enabled: true })]),
     );
     expect(listResponse.body[0]).not.toHaveProperty('signingSecret');
 
