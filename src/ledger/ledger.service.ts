@@ -14,10 +14,7 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { externalClearingAccountKey } from './ledger.constants';
-import {
-  normalizeLedgerTransactionInput,
-  type LedgerTransactionInput,
-} from './ledger.invariants';
+import { normalizeLedgerTransactionInput, type LedgerTransactionInput } from './ledger.invariants';
 
 @Injectable()
 export class LedgerService {
