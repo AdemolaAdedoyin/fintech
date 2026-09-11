@@ -1,12 +1,6 @@
 import { HttpStatus, INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import {
-  AuditAction,
-  Currency,
-  IdempotencyStatus,
-  Prisma,
-  TransferStatus,
-} from '@prisma/client';
+import { AuditAction, Currency, IdempotencyStatus, Prisma, TransferStatus } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import type { Server } from 'node:http';
 import request from 'supertest';
@@ -173,12 +167,9 @@ describe('Transfer reversals and audit history (e2e)', () => {
       `${runId}-reverse-transfer`,
     );
 
-    const first = await reverse(
-      sender.accessToken,
-      original.id,
-      `${runId}-reverse-request`,
-      { reason: 'Duplicate payment' },
-    ).expect(HttpStatus.CREATED);
+    const first = await reverse(sender.accessToken, original.id, `${runId}-reverse-request`, {
+      reason: 'Duplicate payment',
+    }).expect(HttpStatus.CREATED);
     const reversal = first.body as ReversalBody;
 
     expect(reversal.transferId).toBe(original.id);
@@ -219,12 +210,9 @@ describe('Transfer reversals and audit history (e2e)', () => {
     expect(postingByAccount.get(sourceAccount.ledgerAccountId)).toBe(4_000n);
     expect(postingByAccount.get(destinationAccount.ledgerAccountId)).toBe(-4_000n);
 
-    const replay = await reverse(
-      sender.accessToken,
-      original.id,
-      `${runId}-reverse-request`,
-      { reason: 'Duplicate payment' },
-    ).expect(HttpStatus.CREATED);
+    const replay = await reverse(sender.accessToken, original.id, `${runId}-reverse-request`, {
+      reason: 'Duplicate payment',
+    }).expect(HttpStatus.CREATED);
     expect((replay.body as ReversalBody).id).toBe(reversal.id);
 
     await reverse(sender.accessToken, original.id, `${runId}-reverse-request`, {
@@ -277,12 +265,7 @@ describe('Transfer reversals and audit history (e2e)', () => {
       '8000',
       `${runId}-failed-original`,
     );
-    await transfer(
-      recipient,
-      thirdParty.initialWallet.id,
-      '8000',
-      `${runId}-spend-recipient`,
-    );
+    await transfer(recipient, thirdParty.initialWallet.id, '8000', `${runId}-spend-recipient`);
 
     const key = `${runId}-failed-reversal`;
     await reverse(sender.accessToken, original.id, key, { reason: 'Recall' }).expect(
@@ -369,12 +352,9 @@ describe('Transfer reversals and audit history (e2e)', () => {
       }),
     ).rejects.toThrow();
 
-    const legitimate = await reverse(
-      sender.accessToken,
-      original.id,
-      `${runId}-guard-legitimate`,
-      { reason: 'Guard test' },
-    ).expect(HttpStatus.CREATED);
+    const legitimate = await reverse(sender.accessToken, original.id, `${runId}-guard-legitimate`, {
+      reason: 'Guard test',
+    }).expect(HttpStatus.CREATED);
     const reversal = legitimate.body as ReversalBody;
 
     await expect(
@@ -443,9 +423,7 @@ describe('Transfer reversals and audit history (e2e)', () => {
             },
           });
 
-          await transaction.$queryRaw(
-            Prisma.sql`SELECT set_config('app.audit_write', 'on', true)`,
-          );
+          await transaction.$queryRaw(Prisma.sql`SELECT set_config('app.audit_write', 'on', true)`);
           await transaction.auditLog.create({
             data: {
               actorUserId: sender.user.id,
