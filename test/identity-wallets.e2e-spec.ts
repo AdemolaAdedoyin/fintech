@@ -102,6 +102,8 @@ describe('Identity and wallets (e2e)', () => {
     expect(user?.passwordHash).not.toBe('correct-horse-battery-staple');
     expect(await prisma.user.count()).toBe(1);
     expect(await prisma.wallet.count()).toBe(1);
+
+    await expect(prisma.user.delete({ where: { id: body.user.id } })).rejects.toThrow();
   });
 
   it('enforces canonical unique email identity and strict input validation', async () => {
@@ -127,6 +129,17 @@ describe('Identity and wallets (e2e)', () => {
         role: 'admin',
       })
       .expect(HttpStatus.BAD_REQUEST);
+
+    await expect(
+      prisma.user.create({
+        data: {
+          email: 'UPPERCASE@example.com',
+          passwordHash: 'not-used-by-this-constraint-test',
+          firstName: 'Direct',
+          lastName: 'Database',
+        },
+      }),
+    ).rejects.toThrow();
   });
 
   it('authenticates with a short-lived bearer token and returns the current profile', async () => {
@@ -135,6 +148,11 @@ describe('Identity and wallets (e2e)', () => {
     await request(httpServer)
       .post('/api/v1/auth/login')
       .send({ email: 'alex@example.com', password: 'wrong-password' })
+      .expect(HttpStatus.UNAUTHORIZED);
+
+    await request(httpServer)
+      .post('/api/v1/auth/login')
+      .send({ email: 'missing@example.com', password: 'wrong-password' })
       .expect(HttpStatus.UNAUTHORIZED);
 
     const loginResponse = await request(httpServer)
@@ -195,6 +213,13 @@ describe('Identity and wallets (e2e)', () => {
       .set('Authorization', `Bearer ${account.accessToken}`)
       .send({ currency: Currency.NGN })
       .expect(HttpStatus.CONFLICT);
+
+    await expect(
+      prisma.wallet.update({
+        where: { id: ngnWallet.id },
+        data: { currentBalanceMinor: -1n },
+      }),
+    ).rejects.toThrow();
 
     await prisma.wallet.update({
       where: { id: ngnWallet.id },
