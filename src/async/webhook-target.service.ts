@@ -131,7 +131,10 @@ export class WebhookTargetService {
   }
 
   private normalizeHostname(hostname: string): string {
-    return hostname.replace(/^\[|\]$/g, '').replace(/\.$/, '').toLowerCase();
+    return hostname
+      .replace(/^\[|\]$/g, '')
+      .replace(/\.$/, '')
+      .toLowerCase();
   }
 
   private isPublicAddress(address: string, family: number): boolean {
