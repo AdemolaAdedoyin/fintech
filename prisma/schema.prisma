@@ -39,6 +39,22 @@ enum AuditAction {
   TRANSFER_REVERSED
 }
 
+enum OutboxEventType {
+  TRANSFER_COMPLETED
+  TRANSFER_REVERSED
+}
+
+enum OutboxStatus {
+  PENDING
+  PROCESSING
+  PUBLISHED
+}
+
+enum NotificationType {
+  TRANSFER_COMPLETED
+  TRANSFER_REVERSED
+}
+
 model User {
   id                 String              @id @default(uuid()) @db.Uuid
   email              String              @unique @db.VarChar(320)
@@ -53,6 +69,8 @@ model User {
   idempotencyRecords IdempotencyRecord[]
   reversals          TransferReversal[]  @relation("ReversalActor")
   auditLogs          AuditLog[]          @relation("AuditActor")
+  outboxEvents       OutboxEvent[]
+  notifications      Notification[]
 }
 
 model Wallet {
@@ -211,4 +229,40 @@ model AuditLog {
 
   @@unique([action, transferId])
   @@index([actorUserId, createdAt])
+}
+
+model OutboxEvent {
+  id            String          @id @default(uuid()) @db.Uuid
+  type          OutboxEventType
+  aggregateType String          @db.VarChar(64)
+  aggregateId   String          @db.Uuid
+  actorUserId   String          @db.Uuid
+  payload       Json
+  status        OutboxStatus    @default(PENDING)
+  attempts      Int             @default(0)
+  availableAt   DateTime        @default(now()) @db.Timestamptz(3)
+  lockedAt      DateTime?       @db.Timestamptz(3)
+  publishedAt   DateTime?       @db.Timestamptz(3)
+  lastError     String?         @db.VarChar(500)
+  createdAt     DateTime        @default(now()) @db.Timestamptz(3)
+  actor         User            @relation(fields: [actorUserId], references: [id], onDelete: Restrict)
+  notification  Notification?
+
+  @@index([status, availableAt, createdAt])
+  @@index([aggregateType, aggregateId])
+  @@unique([type, aggregateId])
+}
+
+model Notification {
+  id            String           @id @default(uuid()) @db.Uuid
+  outboxEventId String           @unique @db.Uuid
+  userId        String           @db.Uuid
+  type          NotificationType
+  subject       String           @db.VarChar(160)
+  body          String           @db.VarChar(500)
+  createdAt     DateTime         @default(now()) @db.Timestamptz(3)
+  outboxEvent   OutboxEvent      @relation(fields: [outboxEventId], references: [id], onDelete: Restrict)
+  user          User             @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([userId, createdAt])
 }

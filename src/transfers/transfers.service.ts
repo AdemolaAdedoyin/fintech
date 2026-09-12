@@ -12,6 +12,7 @@ import {
   IdempotencyStatus,
   Prisma,
   TransferStatus,
+  OutboxEventType,
   WalletStatus,
   type Transfer,
 } from '@prisma/client';
@@ -228,6 +229,20 @@ export class TransfersService {
                 actorUserId: senderUserId,
                 action: AuditAction.TRANSFER_CREATED,
                 transferId: transfer.id,
+              },
+            });
+
+            await transaction.outboxEvent.create({
+              data: {
+                type: OutboxEventType.TRANSFER_COMPLETED,
+                aggregateType: 'Transfer',
+                aggregateId: transfer.id,
+                actorUserId: senderUserId,
+                payload: {
+                  transferId: transfer.id,
+                  amountMinor: transfer.amountMinor.toString(),
+                  currency: transfer.currency,
+                },
               },
             });
 

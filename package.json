@@ -14,9 +14,11 @@
     "format:check": "prettier --check \"src/**/*.ts\" \"test/**/*.ts\"",
     "lint": "eslint \"src/**/*.ts\" \"test/**/*.ts\" --max-warnings=0",
     "start": "nest start",
-    "dev:bootstrap": "docker compose stop api && docker compose up -d --wait postgres && npm run prisma:generate && npm run db:migrate:deploy",
+    "dev:bootstrap": "docker compose stop api worker && docker compose up -d --wait postgres redis && npm run prisma:generate && npm run db:migrate:deploy",
     "start:dev": "npm run dev:bootstrap && nest start --watch",
     "start:prod": "node dist/main.js",
+    "start:worker": "node dist/worker.js",
+    "start:worker:dev": "npm run dev:bootstrap && nest start --entryFile worker --watch",
     "test": "jest --runInBand",
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage --runInBand",
@@ -37,9 +39,11 @@
     "@nestjs/platform-express": "^11.2.3",
     "@nestjs/swagger": "^11.0.0",
     "@prisma/client": "^6.19.3",
+    "bullmq": "^6.3.4",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.2",
     "helmet": "^8.0.0",
+    "ioredis": "^6.0.0",
     "nestjs-pino": "^4.0.0",
     "pino": "^9.0.0",
     "pino-http": "^10.0.0",
@@ -73,13 +77,19 @@
     "multer": ">=2.2.1"
   },
   "jest": {
-    "moduleFileExtensions": ["js", "json", "ts"],
+    "moduleFileExtensions": [
+      "js",
+      "json",
+      "ts"
+    ],
     "rootDir": ".",
     "testRegex": ".*\\.spec\\.ts$",
     "transform": {
       "^.+\\.(t|j)s$": "ts-jest"
     },
-    "collectCoverageFrom": ["src/**/*.(t|j)s"],
+    "collectCoverageFrom": [
+      "src/**/*.(t|j)s"
+    ],
     "coverageDirectory": "coverage",
     "testEnvironment": "node"
   }

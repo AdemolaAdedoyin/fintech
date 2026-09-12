@@ -15,6 +15,8 @@ const environmentSchema = z.object({
   JWT_ACCESS_TTL_SECONDS: z.coerce.number().int().min(60).max(86400).default(900),
   CORS_ORIGIN: z.string().min(1).default('http://localhost:3000'),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
+  REDIS_URL: z.string().url().default('redis://localhost:6379'),
+  OUTBOX_POLL_INTERVAL_MS: z.coerce.number().int().min(100).max(60000).default(1000),
 });
 
 export type Environment = z.infer<typeof environmentSchema>;

@@ -106,11 +106,24 @@ Phase 5 remains synchronous. Redis/BullMQ, transactional outbox dispatch, notifi
 3. **Ledger core** — immutable ledger transactions/postings, balance invariants, atomic database transactions. ✅
 4. **Transfers** — internal transfers, idempotency, concurrency protection, beneficiaries. ✅
 5. **Reversals and audit** — compensating ledger entries, reversal rules, audit history. ✅
-6. **Async infrastructure** — Redis/BullMQ, outbox processing, notifications, retryable webhook delivery.
+6. **Async infrastructure** — Redis/BullMQ, outbox processing, notifications, retryable webhook delivery. 🚧
 7. **Provider abstraction** — mock provider first, optional tokenized/hosted Paystack integration with verified webhooks.
 8. **Production polish** — deployment, observability, expanded security testing, architecture documentation.
 
 After the useful RiseBeta concepts are represented safely in this project, `riseBeta` will be archived as an earlier experimental iteration.
+
+### Phase 6A — transactional outbox notifications
+
+Completed transfers and reversals create an `OutboxEvent` in the same PostgreSQL transaction as their ledger, domain, audit, and idempotency records. A separate worker process claims events with `FOR UPDATE SKIP LOCKED`, publishes deterministic BullMQ jobs, reclaims stale claims, and retries Redis publication with bounded exponential backoff. Notification persistence is idempotent through a unique outbox-event relationship, so BullMQ's at-least-once delivery cannot create duplicate notifications.
+
+Run the API and worker separately during local development:
+
+```bash
+npm run start:dev
+npm run start:worker:dev
+```
+
+Docker Compose includes PostgreSQL, Redis, migration, API, and worker services. Phase 6B will build retryable outbound webhook delivery on the same outbox foundation.
 
 ## Public API available through Phase 5
 

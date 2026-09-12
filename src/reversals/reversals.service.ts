@@ -11,6 +11,7 @@ import {
   AuditAction,
   IdempotencyStatus,
   Prisma,
+  OutboxEventType,
   TransferStatus,
   WalletStatus,
   type TransferReversal,
@@ -182,6 +183,21 @@ export class ReversalsService {
                 action: AuditAction.TRANSFER_REVERSED,
                 transferId: transfer.id,
                 reversalId: reversal.id,
+              },
+            });
+
+            await transaction.outboxEvent.create({
+              data: {
+                type: OutboxEventType.TRANSFER_REVERSED,
+                aggregateType: 'TransferReversal',
+                aggregateId: reversal.id,
+                actorUserId,
+                payload: {
+                  reversalId: reversal.id,
+                  transferId: transfer.id,
+                  amountMinor: reversal.amountMinor.toString(),
+                  currency: reversal.currency,
+                },
               },
             });
 
