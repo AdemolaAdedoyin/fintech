@@ -125,6 +125,8 @@ npm run start:worker:dev
 
 Docker Compose includes PostgreSQL, Redis, migration, API, and worker services. Phase 6B will build retryable outbound webhook delivery on the same outbox foundation.
 
+The Docker Redis service is exposed to host-run workers and tests at `redis://localhost:6380` to avoid conflicting with a system Redis commonly using port `6379`. Containers use `redis://redis:6379` internally.
+
 ## Public API available through Phase 5
 
 | Method   | Route                                    | Purpose                                                                                   |

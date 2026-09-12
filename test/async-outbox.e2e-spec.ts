@@ -17,7 +17,7 @@ describe('Transactional outbox notification worker (e2e)', () => {
     process.env.NODE_ENV = 'test';
     process.env.DATABASE_URL ??=
       'postgresql://fintech:fintech_dev@localhost:5433/fintech?schema=public';
-    process.env.REDIS_URL ??= 'redis://localhost:6379';
+    process.env.REDIS_URL ??= 'redis://localhost:6380';
     process.env.JWT_ACCESS_SECRET =
       'phase-six-worker-secret-that-is-longer-than-thirty-two-characters';
     process.env.JWT_ACCESS_TTL_SECONDS = '900';
