@@ -1,6 +1,13 @@
 import { HttpStatus, INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import { AuditAction, Currency, IdempotencyStatus, Prisma, TransferStatus } from '@prisma/client';
+import {
+  AuditAction,
+  Currency,
+  IdempotencyStatus,
+  Prisma,
+  TransferStatus,
+  WalletStatus,
+} from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import type { Server } from 'node:http';
 import request from 'supertest';
@@ -45,6 +52,11 @@ interface AuditBody {
   action: AuditAction;
   transferId: string;
   reversalId: string | null;
+}
+
+interface AuditPageBody {
+  items: AuditBody[];
+  nextCursor: string | null;
 }
 
 describe('Transfer reversals and audit history (e2e)', () => {
@@ -223,7 +235,7 @@ describe('Transfer reversals and audit history (e2e)', () => {
       .get('/api/v1/audit')
       .set('Authorization', `Bearer ${sender.accessToken}`)
       .expect(HttpStatus.OK);
-    const relatedAudit = (auditResponse.body as AuditBody[]).filter(
+    const relatedAudit = (auditResponse.body as AuditPageBody).items.filter(
       (entry) => entry.transferId === original.id,
     );
     expect(relatedAudit).toHaveLength(2);
@@ -251,6 +263,84 @@ describe('Transfer reversals and audit history (e2e)', () => {
         where: { transferId: original.id, action: AuditAction.TRANSFER_REVERSED },
       }),
     ).toBe(1);
+  });
+
+  it('paginates audit history without silently truncating it', async () => {
+    const sender = await register('audit-page-sender');
+    const recipient = await register('audit-page-recipient');
+    await fund(sender.initialWallet.id, 10_000n);
+
+    for (const sequence of [1, 2, 3]) {
+      await transfer(sender, recipient.initialWallet.id, '100', `${runId}-audit-page-${sequence}`);
+    }
+
+    const first = await request(httpServer)
+      .get('/api/v1/audit?limit=2')
+      .set('Authorization', `Bearer ${sender.accessToken}`)
+      .expect(HttpStatus.OK);
+    const firstPage = first.body as AuditPageBody;
+    expect(firstPage.items).toHaveLength(2);
+    expect(firstPage.nextCursor).toBeTruthy();
+
+    const second = await request(httpServer)
+      .get(`/api/v1/audit?limit=2&cursor=${firstPage.nextCursor}`)
+      .set('Authorization', `Bearer ${sender.accessToken}`)
+      .expect(HttpStatus.OK);
+    const secondPage = second.body as AuditPageBody;
+    expect(secondPage.items).toHaveLength(1);
+    expect(secondPage.nextCursor).toBeNull();
+    expect(new Set([...firstPage.items, ...secondPage.items].map((entry) => entry.id)).size).toBe(
+      3,
+    );
+
+    await request(httpServer)
+      .get('/api/v1/audit?limit=101')
+      .set('Authorization', `Bearer ${sender.accessToken}`)
+      .expect(HttpStatus.BAD_REQUEST);
+  });
+
+  it('makes the active-wallet reversal rule explicit and idempotent', async () => {
+    const sender = await register('inactive-sender');
+    const recipient = await register('inactive-recipient');
+    await fund(sender.initialWallet.id, 2_000n);
+
+    const original = await transfer(
+      sender,
+      recipient.initialWallet.id,
+      '2000',
+      `${runId}-inactive-original`,
+    );
+
+    await request(httpServer)
+      .post(`/api/v1/wallets/${sender.initialWallet.id}/close`)
+      .set('Authorization', `Bearer ${sender.accessToken}`)
+      .expect(HttpStatus.OK);
+
+    const key = `${runId}-inactive-reversal`;
+    const failure = await reverse(sender.accessToken, original.id, key).expect(HttpStatus.CONFLICT);
+    expect((failure.body as { message: string }).message).toBe(
+      'Both transfer wallets must be active before reversal',
+    );
+
+    expect(
+      (await prisma.wallet.findUniqueOrThrow({ where: { id: sender.initialWallet.id } })).status,
+    ).toBe(WalletStatus.CLOSED);
+    expect(await prisma.transferReversal.count({ where: { transferId: original.id } })).toBe(0);
+
+    await reverse(sender.accessToken, original.id, key).expect(HttpStatus.CONFLICT);
+    expect(
+      (
+        await prisma.idempotencyRecord.findUniqueOrThrow({
+          where: {
+            userId_scope_key: {
+              userId: sender.user.id,
+              scope: 'transfer-reversal',
+              key,
+            },
+          },
+        })
+      ).status,
+    ).toBe(IdempotencyStatus.FAILED);
   });
 
   it('persists a failed reversal so later funds cannot change the same request outcome', async () => {

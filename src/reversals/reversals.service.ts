@@ -12,6 +12,7 @@ import {
   IdempotencyStatus,
   Prisma,
   TransferStatus,
+  WalletStatus,
   type TransferReversal,
 } from '@prisma/client';
 import { createHash, randomUUID } from 'node:crypto';
@@ -106,11 +107,13 @@ export class ReversalsService {
                 sourceWallet: {
                   select: {
                     ledgerAccountId: true,
+                    status: true,
                   },
                 },
                 destinationWallet: {
                   select: {
                     ledgerAccountId: true,
+                    status: true,
                   },
                 },
                 reversal: true,
@@ -127,6 +130,13 @@ export class ReversalsService {
 
             if (transfer.reversal) {
               throw new ConflictException('Transfer has already been reversed');
+            }
+
+            if (
+              transfer.sourceWallet.status !== WalletStatus.ACTIVE ||
+              transfer.destinationWallet.status !== WalletStatus.ACTIVE
+            ) {
+              throw new ConflictException('Both transfer wallets must be active before reversal');
             }
 
             const reversalId = randomUUID();
