@@ -1,6 +1,6 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { isIP } from 'node:net';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { WebhookSigningService } from '../async/webhook-signing.service';
+import { WebhookTargetService } from '../async/webhook-target.service';
 import { PrismaService } from '../prisma/prisma.service';
 import type { CreateWebhookEndpointDto } from './dto/create-webhook-endpoint.dto';
 
@@ -9,10 +9,11 @@ export class WebhooksService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly signing: WebhookSigningService,
+    private readonly targets: WebhookTargetService,
   ) {}
 
   async createEndpoint(userId: string, input: CreateWebhookEndpointDto) {
-    const url = this.normalizeAndValidateUrl(input.url);
+    const url = this.targets.normalizeAndValidateUrl(input.url);
     const endpoint = await this.prisma.webhookEndpoint.create({
       data: {
         userId,
@@ -82,78 +83,6 @@ export class WebhooksService {
       deliveredAt: delivery.deliveredAt,
       createdAt: delivery.createdAt,
     }));
-  }
-
-  private normalizeAndValidateUrl(value: string): string {
-    let url: URL;
-    try {
-      url = new URL(value);
-    } catch {
-      throw new BadRequestException('Webhook URL must be a valid absolute HTTPS URL');
-    }
-
-    if (url.protocol !== 'https:') {
-      throw new BadRequestException('Webhook URL must use HTTPS');
-    }
-
-    if (url.username || url.password) {
-      throw new BadRequestException('Webhook URL must not include credentials');
-    }
-
-    if (url.hash) {
-      throw new BadRequestException('Webhook URL must not include a fragment');
-    }
-
-    const hostname = url.hostname.replace(/^\[|\]$/g, '').toLowerCase();
-    if (
-      hostname === 'localhost' ||
-      hostname.endsWith('.localhost') ||
-      hostname.endsWith('.local') ||
-      hostname.endsWith('.internal')
-    ) {
-      throw new BadRequestException('Webhook URL must use a public hostname');
-    }
-
-    const ipVersion = isIP(hostname);
-    if (ipVersion === 4 && this.isPrivateIpv4(hostname)) {
-      throw new BadRequestException('Webhook URL must not target a private IPv4 address');
-    }
-
-    if (ipVersion === 6 && this.isPrivateIpv6(hostname)) {
-      throw new BadRequestException('Webhook URL must not target a private IPv6 address');
-    }
-
-    return url.toString();
-  }
-
-  private isPrivateIpv4(hostname: string): boolean {
-    const octets = hostname.split('.').map(Number);
-    if (octets.length !== 4 || octets.some((part) => !Number.isInteger(part))) return true;
-
-    const [a, b] = octets;
-    return (
-      a === 0 ||
-      a === 10 ||
-      a === 127 ||
-      (a === 169 && b === 254) ||
-      (a === 172 && b >= 16 && b <= 31) ||
-      (a === 192 && b === 168) ||
-      a >= 224
-    );
-  }
-
-  private isPrivateIpv6(hostname: string): boolean {
-    const normalized = hostname.toLowerCase();
-    return (
-      normalized === '::' ||
-      normalized === '::1' ||
-      normalized.startsWith('fc') ||
-      normalized.startsWith('fd') ||
-      normalized.startsWith('fe8') ||
-      normalized.startsWith('fe9') ||
-      normalized.startsWith('fea') ||
-      normalized.startsWith('feb')
-    );
   }
 
   private toEndpointResponse(endpoint: {
