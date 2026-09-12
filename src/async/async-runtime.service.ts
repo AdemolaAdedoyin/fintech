@@ -11,6 +11,7 @@ import {
   WEBHOOK_PROCESSING_STALE_MS,
 } from './queue.constants';
 import { WebhookSigningService } from './webhook-signing.service';
+import { WebhookTargetService } from './webhook-target.service';
 
 interface DomainEventPayload {
   senderUserId: string;
@@ -47,6 +48,7 @@ export class AsyncRuntimeService implements OnModuleInit, OnModuleDestroy {
     private readonly config: ConfigService,
     private readonly prisma: PrismaService,
     private readonly signing: WebhookSigningService,
+    private readonly targets: WebhookTargetService,
   ) {
     this.connection = this.parseRedisConnection(this.config.getOrThrow<string>('REDIS_URL'));
     this.domainQueue = new Queue(DOMAIN_EVENTS_QUEUE, { connection: this.connection });
@@ -198,15 +200,15 @@ export class AsyncRuntimeService implements OnModuleInit, OnModuleDestroy {
           attempts: 5,
           backoff: { type: 'exponential', delay: 1_000 },
           removeOnComplete: { age: 86_400, count: 10_000 },
-          removeOnFail: { age: 604_800, count: 10_000 },
+          removeOnFail: true,
         },
       );
 
       await this.prisma.outboxEvent.update({
         where: { id: event.id },
         data: {
-          publishedAt: new Date(),
           publishAttempts: { increment: 1 },
+          nextPublishAt: new Date(Date.now() + 60_000),
           lastError: null,
         },
       });
@@ -236,6 +238,7 @@ export class AsyncRuntimeService implements OnModuleInit, OnModuleDestroy {
     if (!event) {
       throw new Error(`Outbox event ${outboxEventId} no longer exists`);
     }
+    if (event.publishedAt) return;
 
     const payload = this.parseDomainPayload(event.payload);
     const recipientIds = [...new Set([payload.senderUserId, payload.recipientUserId])];
@@ -286,6 +289,11 @@ export class AsyncRuntimeService implements OnModuleInit, OnModuleDestroy {
           skipDuplicates: true,
         });
       }
+
+      await transaction.outboxEvent.updateMany({
+        where: { id: event.id, publishedAt: null },
+        data: { publishedAt: new Date(), lastError: null },
+      });
     });
   }
 
@@ -328,8 +336,8 @@ export class AsyncRuntimeService implements OnModuleInit, OnModuleDestroy {
     const finalAttempt = job.attemptsMade + 1 >= maxAttempts;
 
     try {
-      const response = await fetch(delivery.endpoint.url, {
-        method: 'POST',
+      const responseStatus = await this.targets.post({
+        url: delivery.endpoint.url,
         headers: {
           'content-type': 'application/json',
           'user-agent': 'fintech-transaction-platform/1.0',
@@ -339,13 +347,12 @@ export class AsyncRuntimeService implements OnModuleInit, OnModuleDestroy {
           'x-fintech-signature': signature,
         },
         body: rawBody,
-        redirect: 'error',
-        signal: AbortSignal.timeout(timeoutMs),
+        timeoutMs,
       });
 
-      if (!response.ok) {
-        const message = `Webhook endpoint returned HTTP ${response.status}`;
-        await this.recordWebhookFailure(delivery.id, message, finalAttempt, response.status);
+      if (responseStatus < 200 || responseStatus >= 300) {
+        const message = `Webhook endpoint returned HTTP ${responseStatus}`;
+        await this.recordWebhookFailure(delivery.id, message, finalAttempt, responseStatus);
         throw new Error(message);
       }
 
@@ -355,7 +362,7 @@ export class AsyncRuntimeService implements OnModuleInit, OnModuleDestroy {
           status: WebhookDeliveryStatus.SUCCEEDED,
           attemptCount: { increment: 1 },
           lastAttemptAt: new Date(),
-          responseStatus: response.status,
+          responseStatus,
           lastError: null,
           deliveredAt: new Date(),
         },
