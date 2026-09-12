@@ -87,11 +87,12 @@ Reversals preserve the immutable accounting model instead of editing or deleting
 - the original `Transfer` remains `COMPLETED` and its ledger history remains immutable
 - every reversal creates a new sealed ledger transaction with the exact opposite postings and the exact original amount/currency
 - only the authenticated original sender can reverse the transfer
+- both wallets must still be active; frozen or closed wallets require an operational lifecycle resolution before reversal so compliance restrictions are not bypassed and funds are not credited into an unusable closed wallet
 - the original transfer row is locked before reversal eligibility is checked, so competing reversal requests cannot compensate the same transfer twice
 - the existing non-negative customer-balance rule applies to reversals; if the recipient has already spent the funds, the reversal fails instead of forcing the recipient wallet negative
 - reversal requests require their own persisted `Idempotency-Key`, normalized request hash, successful replay behavior, payload-mismatch protection, and immutable terminal outcome
 - deterministic failed reversals remain failed for the same idempotency key even if wallet balances later change
-- `AuditLog` records are append-only and capture both `TRANSFER_CREATED` and `TRANSFER_REVERSED` business events
+- `AuditLog` records are append-only and capture both `TRANSFER_CREATED` and `TRANSFER_REVERSED` business events, including backfilled creation events for transfers that predate Phase 5
 - reversal rows and audit rows are protected against direct update/delete operations
 - deferred PostgreSQL integrity checks independently verify that a reversal exactly compensates its original transfer and has one matching reversal audit event
 - E2E concurrency coverage proves simultaneous reversal attempts result in exactly one compensating ledger transaction
@@ -113,26 +114,26 @@ After the useful RiseBeta concepts are represented safely in this project, `rise
 
 ## Public API available through Phase 5
 
-| Method | Route | Purpose |
-| --- | --- | --- |
-| `POST` | `/api/v1/auth/register` | Register and create the first wallet atomically |
-| `POST` | `/api/v1/auth/login` | Authenticate and issue a short-lived bearer token |
-| `GET` | `/api/v1/auth/me` | Return the authenticated user profile |
-| `POST` | `/api/v1/wallets` | Create another supported-currency wallet |
-| `GET` | `/api/v1/wallets` | List wallets owned by the authenticated user |
-| `GET` | `/api/v1/wallets/:walletId` | Read one owned wallet |
-| `POST` | `/api/v1/wallets/:walletId/close` | Close an owned zero-balance wallet |
-| `POST` | `/api/v1/transfers` | Create an idempotent same-currency internal transfer |
-| `GET` | `/api/v1/transfers` | List transfers initiated by the authenticated user |
-| `GET` | `/api/v1/transfers/:transferId` | Read one transfer initiated by the authenticated user |
-| `POST` | `/api/v1/transfers/:transferId/reversal` | Create an idempotent compensating reversal |
-| `GET` | `/api/v1/transfers/:transferId/reversal` | Read the owned transfer's reversal |
-| `GET` | `/api/v1/audit` | List immutable transfer/reversal audit events for the authenticated user |
-| `POST` | `/api/v1/beneficiaries` | Save another user's active wallet as a beneficiary |
-| `GET` | `/api/v1/beneficiaries` | List active saved beneficiaries |
-| `DELETE` | `/api/v1/beneficiaries/:beneficiaryId` | Soft-delete a saved beneficiary |
-| `GET` | `/api/v1/health/live` | Process liveness |
-| `GET` | `/api/v1/health/ready` | PostgreSQL readiness |
+| Method   | Route                                    | Purpose                                                                                   |
+| -------- | ---------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `POST`   | `/api/v1/auth/register`                  | Register and create the first wallet atomically                                           |
+| `POST`   | `/api/v1/auth/login`                     | Authenticate and issue a short-lived bearer token                                         |
+| `GET`    | `/api/v1/auth/me`                        | Return the authenticated user profile                                                     |
+| `POST`   | `/api/v1/wallets`                        | Create another supported-currency wallet                                                  |
+| `GET`    | `/api/v1/wallets`                        | List wallets owned by the authenticated user                                              |
+| `GET`    | `/api/v1/wallets/:walletId`              | Read one owned wallet                                                                     |
+| `POST`   | `/api/v1/wallets/:walletId/close`        | Close an owned zero-balance wallet                                                        |
+| `POST`   | `/api/v1/transfers`                      | Create an idempotent same-currency internal transfer                                      |
+| `GET`    | `/api/v1/transfers`                      | List transfers initiated by the authenticated user                                        |
+| `GET`    | `/api/v1/transfers/:transferId`          | Read one transfer initiated by the authenticated user                                     |
+| `POST`   | `/api/v1/transfers/:transferId/reversal` | Create an idempotent compensating reversal                                                |
+| `GET`    | `/api/v1/transfers/:transferId/reversal` | Read the owned transfer's reversal                                                        |
+| `GET`    | `/api/v1/audit?limit=50&cursor=...`      | Page through immutable transfer/reversal audit events performed by the authenticated user |
+| `POST`   | `/api/v1/beneficiaries`                  | Save another user's active wallet as a beneficiary                                        |
+| `GET`    | `/api/v1/beneficiaries`                  | List active saved beneficiaries                                                           |
+| `DELETE` | `/api/v1/beneficiaries/:beneficiaryId`   | Soft-delete a saved beneficiary                                                           |
+| `GET`    | `/api/v1/health/live`                    | Process liveness                                                                          |
+| `GET`    | `/api/v1/health/ready`                   | PostgreSQL readiness                                                                      |
 
 Swagger is available at `/docs` and documents the transfer/reversal `Idempotency-Key` headers and request DTOs.
 
@@ -176,7 +177,7 @@ Content-Type: application/json
 }
 ```
 
-A reversal does not rewrite the original transfer. It creates a second immutable ledger transaction that credits the original source account and debits the original destination account for the same amount. If the destination wallet no longer has enough funds, the request returns `409 Conflict` and no partial reversal is committed. Retrying a deterministic failed reversal with the same idempotency key returns the stored failure even if balances later change.
+A reversal does not rewrite the original transfer. It creates a second immutable ledger transaction that credits the original source account and debits the original destination account for the same amount. Both wallets must remain active. If either wallet is inactive or the destination wallet no longer has enough funds, the request returns `409 Conflict` and no partial reversal is committed. Retrying a deterministic failed reversal with the same idempotency key returns the stored failure even if wallet state later changes.
 
 ## Ledger model
 
@@ -379,12 +380,12 @@ The PostgreSQL container must be running for a host-side migration command to wo
 
 ### Common startup errors
 
-| Error | Usually means | Fix |
-| --- | --- | --- |
-| `P1001: Can't reach database server at localhost:5433` | PostgreSQL is stopped | Run `npm run start:dev` or start it manually with `docker compose up -d --wait postgres` |
-| `P1000: Authentication failed` | Your `.env` does not match the Fintech database or you reached a different PostgreSQL instance | Confirm `DATABASE_URL` uses `fintech:fintech_dev@localhost:5433/fintech` and inspect `docker compose ps` |
-| `Can't reach database server at postgres:5432` | A Docker API/migration container was started without the Compose PostgreSQL service | Start the stack through `docker compose up -d --build` rather than running the API image by itself |
-| `EADDRINUSE ... 0.0.0.0:3000` | Another process already owns port `3000`, commonly the Docker API | `npm run start:dev` now stops the Compose API first; otherwise inspect the process using port `3000` |
+| Error                                                  | Usually means                                                                                  | Fix                                                                                                      |
+| ------------------------------------------------------ | ---------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `P1001: Can't reach database server at localhost:5433` | PostgreSQL is stopped                                                                          | Run `npm run start:dev` or start it manually with `docker compose up -d --wait postgres`                 |
+| `P1000: Authentication failed`                         | Your `.env` does not match the Fintech database or you reached a different PostgreSQL instance | Confirm `DATABASE_URL` uses `fintech:fintech_dev@localhost:5433/fintech` and inspect `docker compose ps` |
+| `Can't reach database server at postgres:5432`         | A Docker API/migration container was started without the Compose PostgreSQL service            | Start the stack through `docker compose up -d --build` rather than running the API image by itself       |
+| `EADDRINUSE ... 0.0.0.0:3000`                          | Another process already owns port `3000`, commonly the Docker API                              | `npm run start:dev` now stops the Compose API first; otherwise inspect the process using port `3000`     |
 
 A quick health check after startup is:
 
