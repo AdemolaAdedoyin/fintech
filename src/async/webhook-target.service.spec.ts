@@ -36,7 +36,7 @@ describe('WebhookTargetService', () => {
 
   it('rejects hostnames when DNS includes a private address', async () => {
     const target = new StubWebhookTargetService([
-      { address: '203.0.113.10', family: 4 },
+      { address: '8.8.8.8', family: 4 },
       { address: '127.0.0.1', family: 4 },
     ]);
 
