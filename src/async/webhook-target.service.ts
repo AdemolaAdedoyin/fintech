@@ -114,7 +114,10 @@ export class WebhookTargetService {
     }
 
     for (const address of addresses) {
-      if ((address.family !== 4 && address.family !== 6) || !this.isPublicAddress(address.address, address.family)) {
+      if (
+        (address.family !== 4 && address.family !== 6) ||
+        !this.isPublicAddress(address.address, address.family)
+      ) {
         throw new Error('Webhook target hostname resolved to a non-public IP address');
       }
     }
