@@ -20,7 +20,7 @@ jobs:
           ref: modernization/phase-6-queues-outbox
 
       - name: Apply review fixes
-        shell: python
+        shell: python {0}
         run: |
           from pathlib import Path
 
