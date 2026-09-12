@@ -12,6 +12,7 @@ import {
   IdempotencyStatus,
   Prisma,
   TransferStatus,
+  OutboxEventType,
   WalletStatus,
   type Transfer,
 } from '@prisma/client';
@@ -231,6 +232,20 @@ export class TransfersService {
               },
             });
 
+            await transaction.outboxEvent.create({
+              data: {
+                type: OutboxEventType.TRANSFER_COMPLETED,
+                aggregateType: 'Transfer',
+                aggregateId: transfer.id,
+                actorUserId: senderUserId,
+                payload: {
+                  transferId: transfer.id,
+                  amountMinor: transfer.amountMinor.toString(),
+                  currency: transfer.currency,
+                },
+              },
+            });
+
             await transaction.idempotencyRecord.update({
               where: { id: claim.id },
               data: {
@@ -280,9 +295,12 @@ export class TransfersService {
         }
 
         if (this.isSerializationConflict(error)) {
-          throw new ConflictException(
-            'Concurrent transfer update detected; retry using the same Idempotency-Key',
+          outcome = await this.replayAfterIdempotencyRace(
+            senderUserId,
+            idempotencyKey,
+            requestHash,
           );
+          return this.unwrapOutcome(outcome);
         }
       }
 
@@ -416,22 +434,25 @@ export class TransfersService {
     key: string,
     requestHash: string,
   ): Promise<TransferAttemptOutcome> {
-    const existing = await this.prisma.idempotencyRecord.findUnique({
-      where: {
-        userId_scope_key: {
-          userId: senderUserId,
-          scope: IDEMPOTENCY_SCOPE,
-          key,
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const existing = await this.prisma.idempotencyRecord.findUnique({
+        where: {
+          userId_scope_key: {
+            userId: senderUserId,
+            scope: IDEMPOTENCY_SCOPE,
+            key,
+          },
         },
-      },
-      include: { transfer: true },
-    });
+        include: { transfer: true },
+      });
 
-    if (!existing) {
-      throw new ConflictException('Concurrent transfer conflict detected; retry the request');
+      if (existing) return this.resolveExistingIdempotency(existing, requestHash);
+      if (attempt < 4) await new Promise((resolve) => setTimeout(resolve, 25));
     }
 
-    return this.resolveExistingIdempotency(existing, requestHash);
+    throw new ConflictException(
+      'Concurrent transfer update detected; retry using the same Idempotency-Key',
+    );
   }
 
   private isSerializationConflict(error: Prisma.PrismaClientKnownRequestError): boolean {

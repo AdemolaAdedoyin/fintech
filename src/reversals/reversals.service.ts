@@ -11,6 +11,7 @@ import {
   AuditAction,
   IdempotencyStatus,
   Prisma,
+  OutboxEventType,
   TransferStatus,
   WalletStatus,
   type TransferReversal,
@@ -185,6 +186,21 @@ export class ReversalsService {
               },
             });
 
+            await transaction.outboxEvent.create({
+              data: {
+                type: OutboxEventType.TRANSFER_REVERSED,
+                aggregateType: 'TransferReversal',
+                aggregateId: reversal.id,
+                actorUserId,
+                payload: {
+                  reversalId: reversal.id,
+                  transferId: transfer.id,
+                  amountMinor: reversal.amountMinor.toString(),
+                  currency: reversal.currency,
+                },
+              },
+            });
+
             await transaction.idempotencyRecord.update({
               where: { id: claim.id },
               data: {
@@ -230,9 +246,8 @@ export class ReversalsService {
         }
 
         if (this.isSerializationConflict(error)) {
-          throw new ConflictException(
-            'Concurrent reversal update detected; retry using the same Idempotency-Key',
-          );
+          outcome = await this.replayAfterIdempotencyRace(actorUserId, idempotencyKey, requestHash);
+          return this.unwrapOutcome(outcome);
         }
       }
 
@@ -336,22 +351,25 @@ export class ReversalsService {
     key: string,
     requestHash: string,
   ): Promise<ReversalAttemptOutcome> {
-    const existing = await this.prisma.idempotencyRecord.findUnique({
-      where: {
-        userId_scope_key: {
-          userId: actorUserId,
-          scope: IDEMPOTENCY_SCOPE,
-          key,
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const existing = await this.prisma.idempotencyRecord.findUnique({
+        where: {
+          userId_scope_key: {
+            userId: actorUserId,
+            scope: IDEMPOTENCY_SCOPE,
+            key,
+          },
         },
-      },
-      include: { reversal: true },
-    });
+        include: { reversal: true },
+      });
 
-    if (!existing) {
-      throw new ConflictException('Concurrent reversal conflict detected; retry the request');
+      if (existing) return this.resolveExistingIdempotency(existing, requestHash);
+      if (attempt < 4) await new Promise((resolve) => setTimeout(resolve, 25));
     }
 
-    return this.resolveExistingIdempotency(existing, requestHash);
+    throw new ConflictException(
+      'Concurrent reversal update detected; retry using the same Idempotency-Key',
+    );
   }
 
   private isSerializationConflict(error: Prisma.PrismaClientKnownRequestError): boolean {
