@@ -1,3 +1,4 @@
+import { WebhooksModule } from './webhooks/webhooks.module';
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { LoggerModule } from 'nestjs-pino';
@@ -46,6 +47,7 @@ import { WalletsModule } from './wallets/wallets.module';
     TransfersModule,
     ReversalsModule,
     AuditModule,
+    WebhooksModule,
   ],
 })
 export class AppModule {}

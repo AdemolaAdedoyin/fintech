@@ -461,3 +461,75 @@ The transaction-local ledger-write, transfer-write, reversal-write, and audit-wr
 The original project provided user registration, authentication, wallet funding, payouts, beneficiaries, and external payment-provider integrations. RiseBeta later experimented with transaction history, reversals, USD wallets, plans, and portfolio-style calculations.
 
 The rebuild keeps the useful product ideas while replacing the legacy runtime, floating-point money handling, direct balance mutation, tightly coupled payment-provider logic, and outdated security patterns.
+
+## Phase 6B: outbound webhooks
+
+Authenticated users can subscribe to their own `TRANSFER_COMPLETED` and
+`TRANSFER_REVERSED` events. Set `WEBHOOK_ENCRYPTION_KEY` to a private, stable
+64-character hexadecimal value (`openssl rand -hex 32`) in both API and worker.
+Without the key, subscription creation returns 503 and the webhook worker stays
+inactive. Existing notifications continue normally. Secrets are encrypted with
+AES-256-GCM; changing or losing this key makes existing secrets unreadable.
+Key rotation and endpoint editing are outside this phase.
+
+All routes below use the `/api/v1` prefix and bearer authentication:
+
+| Method | Route | Behavior |
+| --- | --- | --- |
+| POST | `/webhooks` | Accept `{ "url": "https://merchant.example.com/events" }`; return the signing `secret` once with `Cache-Control: no-store` |
+| GET | `/webhooks` | List owned subscriptions without secrets |
+| DELETE | `/webhooks/:id` | Disable and cancel outstanding deliveries; return 204 |
+| GET | `/webhooks/:id/deliveries?limit=50&cursor=...` | Paginated delivery and attempt history; follow `nextCursor` |
+
+The outbox INSERT trigger captures enabled subscriptions visible in that
+transaction's snapshot, atomically with the domain write. Concurrent subscriptions
+not yet visible are excluded, and later subscriptions receive no historical events.
+Concurrent disable/fan-out can leave a pending row temporarily; the claim/send
+checks cancel it. Disabling cannot retract an HTTP request already in flight.
+
+A separate worker (`npm run start:worker`) publishes jobs to `webhook-deliveries`.
+Database leases last 30 seconds and each claim receives a unique token. Duplicate
+jobs, expired tokens and late results cannot update the current lease. Claims use
+`FOR UPDATE SKIP LOCKED`. Delivery is at least once, with no strict ordering.
+A receiver may accept a request before the sender can persist success; receivers
+must therefore deduplicate the stable `Webhook-Id` across retries.
+
+Requests carry `Webhook-Id`, `Webhook-Event-Id`, `Webhook-Timestamp` (Unix seconds),
+and `Webhook-Signature: v1=<hex HMAC-SHA256>`. The body is:
+
+```json
+{
+  "id": "outbox-event-id",
+  "deliveryId": "delivery-id",
+  "type": "TRANSFER_COMPLETED",
+  "createdAt": "2026-09-14T12:00:00.000Z",
+  "data": { "amountMinor": "100", "currency": "USD" }
+}
+```
+
+Calculate HMAC over `${timestamp}.${rawBody}` using the returned secret **as UTF-8
+text**, without hex-decoding it. Verify against the exact raw request bytes, use a
+constant-time comparison, reject timestamps outside your tolerance (for example,
+five minutes), then deduplicate the delivery ID. Payload `data` is the existing
+outbox payload for the relevant event type; the example is abbreviated.
+
+HTTP 2xx succeeds. HTTP 408, 429, 5xx and network/timeouts retry. Other responses,
+unsafe destinations, and signing failures are terminal. There are **five total
+claims**, with four retry delays of 1, 2, 4 and 8 seconds. Claims lost to queue
+publication failures or lease expiry also count toward the limit, even if no HTTP
+request was made. The dispatcher avoids claims when Redis is already known to be
+offline. This bounds failures but is not a guarantee of five receiver requests.
+
+Only HTTPS DNS hostnames on port 443 whose resolved addresses are all public IPv4
+are supported. IPv6, IP literals, credentials, fragments, private and reserved
+addresses are rejected. Each send resolves DNS again and pins the approved IP
+while preserving hostname-based TLS verification. Redirects are not followed;
+response bodies are not buffered; a five-second deadline covers DNS through
+response headers. Error history contains safe codes, never raw transport errors.
+
+Run `npm run prisma:generate`, `npm run db:migrate:deploy`, `npm run ci`, and
+`npm run test:e2e` against disposable PostgreSQL/Redis services. The webhook E2E
+suite uses real database transactions and BullMQ, with HTTP transport mocked;
+transport unit tests exercise address pinning, DNS validation and timeouts.
+Stop other API/worker processes sharing those test services before running tests.
+CI supplies PostgreSQL and Redis (host port 6380; container port 6379).

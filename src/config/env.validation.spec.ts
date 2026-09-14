@@ -49,4 +49,17 @@ describe('validateEnvironment', () => {
       'JWT_ACCESS_TTL_SECONDS',
     );
   });
+  it('accepts an absent webhook key and rejects malformed keys', () => {
+    expect(
+      validateEnvironment({ ...baseEnvironment, WEBHOOK_ENCRYPTION_KEY: '' })
+        .WEBHOOK_ENCRYPTION_KEY,
+    ).toBeUndefined();
+    expect(
+      validateEnvironment({ ...baseEnvironment, WEBHOOK_ENCRYPTION_KEY: 'ab'.repeat(32) })
+        .WEBHOOK_ENCRYPTION_KEY,
+    ).toBe('ab'.repeat(32));
+    expect(() =>
+      validateEnvironment({ ...baseEnvironment, WEBHOOK_ENCRYPTION_KEY: 'bad-key' }),
+    ).toThrow('WEBHOOK_ENCRYPTION_KEY');
+  });
 });
