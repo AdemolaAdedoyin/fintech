@@ -77,7 +77,14 @@ export class WebhookDeliveryService {
         AND "status" = 'PROCESSING' AND "leaseToken" = ${job.leaseToken}::uuid
         AND "leaseUntil" > clock_timestamp() FOR UPDATE
     `);
-    return rows[0];
+    if (!rows[0]) return undefined;
+    // A row-lock wait can outlast a lease without changing the delivery tuple.
+    // Recheck the database clock after acquiring the lock, not just in its predicate.
+    const [lease] = await tx.$queryRaw<{ active: boolean }[]>(Prisma.sql`
+      SELECT "leaseUntil" > clock_timestamp() AS active
+      FROM "WebhookDelivery" WHERE "id" = ${job.deliveryId}::uuid
+    `);
+    return lease?.active ? rows[0] : undefined;
   }
 
   private async start(job: WebhookJobData) {

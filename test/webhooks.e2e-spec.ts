@@ -359,6 +359,38 @@ describe('Outbound webhooks (PostgreSQL/Redis e2e)', () => {
     });
   });
 
+  it('rechecks lease expiry after waiting for a database row lock', async () => {
+    const { delivery } = await fixture();
+    const job = await claim(delivery.id);
+    let locked!: () => void;
+    let release!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      locked = resolve;
+    });
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await prisma.webhookDelivery.update({
+      where: { id: delivery.id },
+      data: { leaseUntil: new Date(Date.now() + 500) },
+    });
+    const holding = prisma.$transaction(async (tx) => {
+      // Hold the row unchanged: expiry must be checked after the lock wait even
+      // when PostgreSQL has no updated tuple that would rerun the predicate.
+      await tx.$queryRaw`SELECT "id" FROM "WebhookDelivery" WHERE "id" = ${delivery.id}::uuid FOR UPDATE`;
+      locked();
+      await gate;
+    });
+    await ready;
+    const executing = deliveries.execute(job);
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    release();
+    await holding;
+    await executing;
+    expect(transport.send).not.toHaveBeenCalled();
+    expect((await read(delivery.id)).attempts[0].status).toBe('QUEUED');
+  });
+
   it('stops recovering expired claims at the attempt limit', async () => {
     const { delivery } = await fixture();
     for (let n = 0; n < 5; n++) {
