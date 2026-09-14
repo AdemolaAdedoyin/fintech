@@ -1,3 +1,5 @@
+import { WebhooksCoreModule } from '../webhooks/webhooks-core.module';
+import { WebhookWorkerService } from '../webhooks/webhook-worker.service';
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { validateEnvironment } from '../config/env.validation';
@@ -9,8 +11,9 @@ import { NotificationService } from './notification.service';
   imports: [
     ConfigModule.forRoot({ isGlobal: true, cache: true, validate: validateEnvironment }),
     PrismaModule,
+    WebhooksCoreModule,
   ],
-  providers: [AsyncWorkerService, NotificationService],
-  exports: [AsyncWorkerService, NotificationService],
+  providers: [AsyncWorkerService, NotificationService, WebhookWorkerService],
+  exports: [AsyncWorkerService, NotificationService, WebhookWorkerService],
 })
 export class AsyncWorkerModule {}

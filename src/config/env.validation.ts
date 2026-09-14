@@ -15,6 +15,13 @@ const environmentSchema = z.object({
   JWT_ACCESS_TTL_SECONDS: z.coerce.number().int().min(60).max(86400).default(900),
   CORS_ORIGIN: z.string().min(1).default('http://localhost:3000'),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
+  WEBHOOK_ENCRYPTION_KEY: z.preprocess(
+    (value) => (value === '' ? undefined : value),
+    z
+      .string()
+      .regex(/^[0-9a-fA-F]{64}$/)
+      .optional(),
+  ),
   REDIS_URL: z.string().url().default('redis://localhost:6380'),
   OUTBOX_POLL_INTERVAL_MS: z.coerce.number().int().min(100).max(60000).default(1000),
 });
