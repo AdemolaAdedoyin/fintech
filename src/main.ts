@@ -9,6 +9,7 @@ import { AppModule } from './app.module';
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create(AppModule, {
     bufferLogs: true,
+    rawBody: true,
     abortOnError: false,
   });
   const config = app.get(ConfigService);

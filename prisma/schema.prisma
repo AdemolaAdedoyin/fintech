@@ -40,6 +40,8 @@ enum AuditAction {
 }
 
 enum OutboxEventType {
+  PAYMENT_SUCCEEDED
+  PAYMENT_FAILED
   TRANSFER_COMPLETED
   TRANSFER_REVERSED
 }
@@ -51,6 +53,8 @@ enum OutboxStatus {
 }
 
 enum NotificationType {
+  PAYMENT_SUCCEEDED
+  PAYMENT_FAILED
   TRANSFER_COMPLETED
   TRANSFER_REVERSED
 }
@@ -72,6 +76,7 @@ model User {
   outboxEvents         OutboxEvent[]
   notifications        Notification[]
   webhookSubscriptions WebhookSubscription[]
+  payments             Payment[]
 }
 
 model Wallet {
@@ -87,6 +92,7 @@ model Wallet {
   ledgerAccount       LedgerAccount @relation(fields: [ledgerAccountId], references: [id], onDelete: Restrict)
   outgoingTransfers   Transfer[]    @relation("TransferSourceWallet")
   incomingTransfers   Transfer[]    @relation("TransferDestinationWallet")
+  payments            Payment[]
   beneficiaries       Beneficiary[]
 
   @@unique([userId, currency])
@@ -118,6 +124,7 @@ model LedgerTransaction {
   postings    LedgerPosting[]
   transfer    Transfer?
   reversal    TransferReversal?
+  payment     Payment?
 }
 
 model LedgerPosting {
@@ -330,4 +337,51 @@ model WebhookAttempt {
   delivery    WebhookDelivery      @relation(fields: [deliveryId], references: [id], onDelete: Restrict)
 
   @@unique([deliveryId, number])
+}
+
+enum PaymentProvider {
+  MOCK
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+}
+
+model Payment {
+  id                  String             @id @default(uuid()) @db.Uuid
+  userId              String             @db.Uuid
+  walletId            String             @db.Uuid
+  provider            PaymentProvider
+  reference           String             @unique @db.VarChar(120)
+  idempotencyKey      String             @db.VarChar(128)
+  requestHash         String             @db.Char(64)
+  amountMinor         BigInt
+  currency            Currency
+  status              PaymentStatus      @default(PENDING)
+  ledgerTransactionId String?            @unique @db.Uuid
+  createdAt           DateTime           @default(now()) @db.Timestamptz(3)
+  completedAt         DateTime?          @db.Timestamptz(3)
+  user                User               @relation(fields: [userId], references: [id], onDelete: Restrict)
+  wallet              Wallet             @relation(fields: [walletId], references: [id], onDelete: Restrict)
+  ledgerTransaction   LedgerTransaction? @relation(fields: [ledgerTransactionId], references: [id], onDelete: Restrict)
+  events              ProviderEvent[]
+
+  @@unique([userId, idempotencyKey])
+  @@index([userId, createdAt, id])
+}
+
+model ProviderEvent {
+  id          String          @id @default(uuid()) @db.Uuid
+  paymentId   String          @db.Uuid
+  provider    PaymentProvider
+  eventId     String          @db.VarChar(128)
+  payloadHash String          @db.Char(64)
+  status      PaymentStatus
+  createdAt   DateTime        @default(now()) @db.Timestamptz(3)
+  payment     Payment         @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+
+  @@unique([provider, eventId])
+  @@index([paymentId, createdAt, id])
 }

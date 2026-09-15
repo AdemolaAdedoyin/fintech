@@ -1,3 +1,4 @@
+import { PaymentsModule } from './payments/payments.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
@@ -28,6 +29,7 @@ import { WalletsModule } from './wallets/wallets.module';
             'req.headers.authorization',
             'req.headers.cookie',
             'req.headers.idempotency-key',
+            'req.headers.mock-signature',
             'req.body.password',
             'req.body.token',
             'req.body.accessToken',
@@ -48,6 +50,7 @@ import { WalletsModule } from './wallets/wallets.module';
     ReversalsModule,
     AuditModule,
     WebhooksModule,
+    PaymentsModule,
   ],
 })
 export class AppModule {}
