@@ -106,8 +106,8 @@ Phase 5 remains synchronous. Redis/BullMQ, transactional outbox dispatch, notifi
 3. **Ledger core** — immutable ledger transactions/postings, balance invariants, atomic database transactions. ✅
 4. **Transfers** — internal transfers, idempotency, concurrency protection, beneficiaries. ✅
 5. **Reversals and audit** — compensating ledger entries, reversal rules, audit history. ✅
-6. **Async infrastructure** — Redis/BullMQ, outbox processing, notifications, retryable webhook delivery. 🚧
-7. **Provider abstraction** — mock provider first, optional tokenized/hosted Paystack integration with verified webhooks.
+6. **Async infrastructure** — Redis/BullMQ, outbox processing, notifications, retryable webhook delivery. ✅
+7. **Provider abstraction** — Phase 7A mock provider and verified wallet funding implemented; optional tokenized/hosted Paystack integration remains Phase 7B. 🚧
 8. **Production polish** — deployment, observability, expanded security testing, architecture documentation.
 
 After the useful RiseBeta concepts are represented safely in this project, `riseBeta` will be archived as an earlier experimental iteration.
@@ -123,11 +123,11 @@ npm run start:dev
 npm run start:worker:dev
 ```
 
-Docker Compose includes PostgreSQL, Redis, migration, API, and worker services. Phase 6B will build retryable outbound webhook delivery on the same outbox foundation.
+Docker Compose includes PostgreSQL, Redis, migration, API, and worker services. Phase 6B adds retryable signed outbound webhook delivery on the same outbox foundation.
 
 The Docker Redis service is exposed to host-run workers and tests at `redis://localhost:6380` to avoid conflicting with a system Redis commonly using port `6379`. Containers use `redis://redis:6379` internally.
 
-## Public API available through Phase 5
+## Core wallet and transfer API
 
 | Method   | Route                                    | Purpose                                                                                   |
 | -------- | ---------------------------------------- | ----------------------------------------------------------------------------------------- |
@@ -533,3 +533,102 @@ suite uses real database transactions and BullMQ, with HTTP transport mocked;
 transport unit tests exercise address pinning, DNS validation and timeouts.
 Stop other API/worker processes sharing those test services before running tests.
 CI supplies PostgreSQL and Redis (host port 6380; container port 6379).
+
+
+## Phase 7A: provider abstraction and mock wallet funding
+
+`PaymentProviderAdapter` separates initialization and verified provider events from
+wallet accounting. The current adapter is a deterministic **mock**, for development
+and tests only. It makes no external payment request, handles no card data, and
+returns no hosted checkout URL. Paystack/real payment credentials are not used.
+Phase 7B may add a tokenized/hosted real-provider adapter after provider-specific
+verification, reconciliation, and operational failure rules are designed.
+
+Payments are disabled by default. To enable mock mode in development, set:
+
+```dotenv
+PAYMENT_PROVIDER=mock
+MOCK_PROVIDER_WEBHOOK_SECRET=<private random value of at least 32 characters>
+```
+
+Generate a secret with `openssl rand -hex 32`. Keep it on the server and in your
+local simulation environment; never expose it to a frontend. Startup rejects
+mock mode with `NODE_ENV=production`, and the adapter also checks this at runtime.
+
+| Method | Route (under `/api/v1`) | Behavior |
+| --- | --- | --- |
+| POST | `/payments` | Authenticated funding intent; requires `Idempotency-Key` |
+| GET | `/payments?limit=50&cursor=...` | Owned payment history with cursor pagination |
+| GET | `/payments/:id` | Current state of an owned payment |
+| GET | `/payments/:id/events?limit=50&cursor=...` | Immutable accepted provider-event history |
+| POST | `/payments/webhooks/mock` | Server-to-server callback, authenticated by its mock signature |
+
+Create an intent using your own wallet ID and an integer amount in minor units:
+
+```http
+POST /api/v1/payments
+Authorization: Bearer <access-token>
+Idempotency-Key: funding-example-1
+Content-Type: application/json
+
+{"walletId":"11111111-1111-4111-8111-111111111111","amountMinor":"2500"}
+```
+
+Currency comes from the wallet. The response includes `id`, a stable
+`payment:<uuid>` reference, `status: "PENDING"`, and `checkoutUrl: null`.
+**Creating an intent does not credit the wallet.** Reusing its key with the same
+normalized request returns the same payment; a different request returns 409.
+A retry may show the payment's current terminal status. If initialization fails
+after the intent is persisted, retry with the same key: the adapter receives the
+same reference, which future adapters must use for upstream idempotency.
+
+To simulate a provider callback, export the same private secret used by the API
+in your terminal, then run:
+
+```bash
+node scripts/mock-payment-callback.mjs 'payment:<uuid-from-response>' 2500 USD SUCCEEDED
+```
+
+The script defaults to `http://localhost:3000`. Set `MOCK_API_ORIGIN` to target a
+different development instance. Use `FAILED` for a failure, and optionally pass
+an event UUID as the fifth argument to replay the same event. The script does not
+load `.env` automatically or print the secret.
+
+Callback JSON consists of exactly `eventId` (UUID), `reference`, `amountMinor`
+(canonical positive integer string), `currency` (`USD` or `NGN`), and `status`
+(`SUCCEEDED` or `FAILED`). `Mock-Timestamp` is Unix seconds; `Mock-Signature` is
+`v1=<hex HMAC-SHA256>` over `${timestamp}.${rawBody}`, using the secret as UTF-8
+text. Signature verification uses the raw bytes and constant-time comparison;
+timestamps more than five minutes old or in the future beyond that tolerance
+are rejected. Signed payloads are limited to 16 KiB. This is this project's mock
+protocol, not the Paystack webhook protocol.
+
+On success, one serializable transaction locks the payment, records immutable
+provider evidence, debits the currency's external-clearing ledger account,
+credits the active wallet, seals the ledger transaction, marks the payment
+`SUCCEEDED`, and creates a `PAYMENT_SUCCEEDED` outbox event. On provider failure,
+it records `FAILED` and `PAYMENT_FAILED` without ledger postings. Notifications
+and signed outbound webhooks support both event types through Phase 6's existing
+infrastructure.
+
+Same-event retries and new event IDs repeating the same terminal result never
+credit twice. Reusing an event ID with different raw content, amount/currency
+mismatches, and contradictory terminal results return 409. Invalid signatures
+return 401, unknown references return 404, and exhausted transient transaction
+retries return 503. Accepted event hashes and idempotency keys are not exposed by
+payment/history responses; raw provider payloads and signatures are not stored.
+
+A closed/frozen wallet or a balance overflow prevents settlement: the entire
+callback transaction rolls back and the intent remains pending, with no consumed
+event ID. Such cases require an operational resolution before retrying; this phase
+does not implement suspense accounts, reopening, refunds, payouts, or reconciliation.
+PostgreSQL independently checks ownership, currency, matching provider evidence,
+outbox presence, and the exact two ledger postings. Terminal payments and accepted
+provider-event history cannot be edited or deleted through ordinary application code.
+As with the existing ledger guards, transaction-local write settings do not defend
+against a database administrator.
+
+Validate with `npm run ci` and `npm run test:e2e` using fresh disposable PostgreSQL
+and Redis services. Payment tests include signed callbacks, duplicate/concurrent
+settlement, failed initialization recovery, database integrity, large integer
+amounts, ownership, and wallet-close races.

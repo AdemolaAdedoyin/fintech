@@ -62,4 +62,25 @@ describe('validateEnvironment', () => {
       validateEnvironment({ ...baseEnvironment, WEBHOOK_ENCRYPTION_KEY: 'bad-key' }),
     ).toThrow('WEBHOOK_ENCRYPTION_KEY');
   });
+  it('keeps mock payments disabled by default and requires a secret when enabled', () => {
+    expect(validateEnvironment(baseEnvironment).PAYMENT_PROVIDER).toBe('disabled');
+    expect(() => validateEnvironment({ ...baseEnvironment, PAYMENT_PROVIDER: 'mock' })).toThrow(
+      'MOCK_PROVIDER_WEBHOOK_SECRET',
+    );
+    expect(() =>
+      validateEnvironment({
+        ...baseEnvironment,
+        PAYMENT_PROVIDER: 'mock',
+        MOCK_PROVIDER_WEBHOOK_SECRET: 'mock-secret-longer-than-thirty-two-characters',
+        NODE_ENV: 'production',
+      }),
+    ).toThrow('cannot be enabled in production');
+    expect(
+      validateEnvironment({
+        ...baseEnvironment,
+        PAYMENT_PROVIDER: 'mock',
+        MOCK_PROVIDER_WEBHOOK_SECRET: 'mock-secret-longer-than-thirty-two-characters',
+      }).PAYMENT_PROVIDER,
+    ).toBe('mock');
+  });
 });
