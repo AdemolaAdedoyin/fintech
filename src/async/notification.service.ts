@@ -24,18 +24,31 @@ export class NotificationService {
   }
 
   private content(type: OutboxEventType, aggregateId: string) {
-    if (type === OutboxEventType.TRANSFER_COMPLETED) {
-      return {
+    const content: Record<
+      OutboxEventType,
+      { type: NotificationType; subject: string; body: string }
+    > = {
+      TRANSFER_COMPLETED: {
         type: NotificationType.TRANSFER_COMPLETED,
         subject: 'Transfer completed',
         body: `Your transfer ${aggregateId} completed successfully.`,
-      };
-    }
-
-    return {
-      type: NotificationType.TRANSFER_REVERSED,
-      subject: 'Transfer reversed',
-      body: `Your transfer reversal ${aggregateId} completed successfully.`,
+      },
+      TRANSFER_REVERSED: {
+        type: NotificationType.TRANSFER_REVERSED,
+        subject: 'Transfer reversed',
+        body: `Your transfer reversal ${aggregateId} completed successfully.`,
+      },
+      PAYMENT_SUCCEEDED: {
+        type: NotificationType.PAYMENT_SUCCEEDED,
+        subject: 'Payment succeeded',
+        body: `Your payment ${aggregateId} funded your wallet successfully.`,
+      },
+      PAYMENT_FAILED: {
+        type: NotificationType.PAYMENT_FAILED,
+        subject: 'Payment failed',
+        body: `Your payment ${aggregateId} failed. Your wallet was not credited.`,
+      },
     };
+    return content[type];
   }
 }

@@ -59,6 +59,9 @@ describe('Transactional outbox notification worker (e2e)', () => {
       where: { outboxEventId: event.id },
     });
     for (let attempt = 0; attempt < 20 && !notification; attempt += 1) {
+      // Other domain suites may leave more than one outbox batch. Poll as the
+      // production dispatcher does instead of assuming this event is in batch one.
+      await worker.dispatchOnce();
       await new Promise((resolve) => setTimeout(resolve, 50));
       notification = await prisma.notification.findUnique({
         where: { outboxEventId: event.id },
