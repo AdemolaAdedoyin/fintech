@@ -107,7 +107,7 @@ Phase 5 remains synchronous. Redis/BullMQ, transactional outbox dispatch, notifi
 4. **Transfers** — internal transfers, idempotency, concurrency protection, beneficiaries. ✅
 5. **Reversals and audit** — compensating ledger entries, reversal rules, audit history. ✅
 6. **Async infrastructure** — Redis/BullMQ, outbox processing, notifications, retryable webhook delivery. ✅
-7. **Provider abstraction** — Phase 7A mock provider and verified wallet funding implemented; optional tokenized/hosted Paystack integration remains Phase 7B. 🚧
+7. **Provider abstraction** — Phase 7A mock provider and Phase 7B Paystack hosted checkout with verified wallet funding implemented. ✅
 8. **Production polish** — deployment, observability, expanded security testing, architecture documentation.
 
 After the useful RiseBeta concepts are represented safely in this project, `riseBeta` will be archived as an earlier experimental iteration.
@@ -538,11 +538,10 @@ CI supplies PostgreSQL and Redis (host port 6380; container port 6379).
 ## Phase 7A: provider abstraction and mock wallet funding
 
 `PaymentProviderAdapter` separates initialization and verified provider events from
-wallet accounting. The current adapter is a deterministic **mock**, for development
+wallet accounting. The Phase 7A adapter is a deterministic **mock**, for development
 and tests only. It makes no external payment request, handles no card data, and
 returns no hosted checkout URL. Paystack/real payment credentials are not used.
-Phase 7B may add a tokenized/hosted real-provider adapter after provider-specific
-verification, reconciliation, and operational failure rules are designed.
+Phase 7B adds the separate opt-in Paystack hosted checkout integration described below.
 
 Payments are disabled by default. To enable mock mode in development, set:
 
@@ -632,3 +631,56 @@ Validate with `npm run ci` and `npm run test:e2e` using fresh disposable Postgre
 and Redis services. Payment tests include signed callbacks, duplicate/concurrent
 settlement, failed initialization recovery, database integrity, large integer
 amounts, ownership, and wallet-close races.
+
+## Phase 7B: Paystack hosted checkout
+
+Paystack is opt-in (`PAYMENT_PROVIDER=paystack`, `PAYSTACK_SECRET_KEY` supplied privately
+through the server environment). Outside production, only `sk_test_` keys are allowed.
+Payments remain disabled by default. This first adapter supports NGN only, with positive
+minor-unit amounts no larger than JavaScript's safe integer range; the internal ledger
+continues to support BIGINT amounts and the mock provider retains its existing currencies.
+
+`POST /api/v1/payments` keeps the existing authenticated body and Idempotency-Key contract.
+Use an NGN wallet. The owner's stored email is sent to Paystack with the immutable amount,
+currency and reference. Open the returned `checkoutUrl` to pay on Paystack's hosted page.
+No card number, CVV, bank authorization or reusable token is accepted or stored by this API.
+The configured Paystack dashboard redirect is navigation only and never credits a wallet.
+
+Configure the dashboard webhook URL as `https://YOUR_API/api/v1/payments/webhooks/paystack`.
+The endpoint checks HMAC-SHA512 over the exact raw body using `x-paystack-signature`, then
+independently requests Paystack's transaction verification endpoint. Only verified success
+with matching reference, amount, currency and test/live domain reaches ledger settlement.
+Unrelated authenticated event types and references are acknowledged without settlement.
+Verification errors return a retryable response; webhook and reconciliation races use the
+same deterministic evidence identity and existing database constraints to credit once.
+Raw provider payloads, authorization details, API keys and signatures are not persisted.
+
+The owner can call `POST /api/v1/payments/:id/reconcile` to recover a missed webhook.
+It performs server-side verification and returns the current payment. Pending, abandoned
+and failed provider attempts leave the intent PENDING because the same reference may later
+succeed. This phase does not implement payouts, refunds, disputes or scheduled reconciliation.
+
+Initialization uses a durable claim before network I/O. Successful checkout URLs are cached
+and returned on same-key retries. Concurrent or uncertain initialization returns HTTP 503;
+it never invents another reference or blindly repeats an upstream initialization. If the
+process dies before sending the request, or the response is lost before saving the URL,
+the claim remains uncertain. Reconcile the original payment and investigate its reference
+in the Paystack dashboard before arranging a replacement. Automatic recovery of that
+checkout URL is intentionally unsupported. Do not delete claims or reuse an idempotency key
+to bypass this safeguard. A closed/frozen wallet cannot be credited; successful external
+payments blocked by wallet state require operational reconciliation rather than dropping
+the provider evidence or manually editing balances.
+
+The adapter uses a fixed HTTPS API origin, rejects redirects, limits responses to 64 KiB,
+and applies a five-second request timeout. Unsafe numeric provider IDs or amounts are
+rejected instead of rounded. Account currency availability and hosted checkout behavior
+must still be verified with your own Paystack test account before deployment. Automated
+coverage uses mocked provider HTTP responses with real PostgreSQL/Redis; no live account
+or real charge is needed for CI.
+
+Protocol references: [transaction initialization and verification](https://paystack.com/docs/api/transaction/)
+and [webhook signatures and retries](https://paystack.com/docs/payments/webhooks/).
+
+Remaining roadmap: **Phase 8 — production readiness**, including deployment configuration,
+observability, expanded security tests, architecture/operations documentation, and external
+Paystack test-account acceptance. Deployment and live payment activation are separate actions.

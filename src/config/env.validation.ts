@@ -4,7 +4,14 @@ const exampleJwtSecret = 'replace-with-at-least-32-random-characters';
 
 const environmentSchema = z
   .object({
-    PAYMENT_PROVIDER: z.enum(['disabled', 'mock']).default('disabled'),
+    PAYMENT_PROVIDER: z.enum(['disabled', 'mock', 'paystack']).default('disabled'),
+    PAYSTACK_SECRET_KEY: z.preprocess(
+      (value) => (value === '' ? undefined : value),
+      z
+        .string()
+        .regex(/^sk_(test|live)_[A-Za-z0-9]+$/)
+        .optional(),
+    ),
     MOCK_PROVIDER_WEBHOOK_SECRET: z.preprocess(
       (value) => (value === '' ? undefined : value),
       z.string().min(32).optional(),
@@ -34,6 +41,18 @@ const environmentSchema = z
     OUTBOX_POLL_INTERVAL_MS: z.coerce.number().int().min(100).max(60000).default(1000),
   })
   .superRefine((config, context) => {
+    if (config.PAYMENT_PROVIDER === 'paystack' && !config.PAYSTACK_SECRET_KEY)
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['PAYSTACK_SECRET_KEY'],
+        message: 'Paystack secret key is required',
+      });
+    if (config.NODE_ENV !== 'production' && config.PAYSTACK_SECRET_KEY?.startsWith('sk_live_'))
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['PAYSTACK_SECRET_KEY'],
+        message: 'Live Paystack keys require production mode',
+      });
     if (config.PAYMENT_PROVIDER === 'mock' && config.NODE_ENV === 'production') {
       context.addIssue({
         code: z.ZodIssueCode.custom,

@@ -28,7 +28,7 @@ export class PaymentsController {
   constructor(private readonly payments: PaymentsService) {}
   @Post()
   @ApiHeader({ name: 'Idempotency-Key', required: true })
-  @ApiOperation({ summary: 'Create a mock-provider funding intent; does not credit the wallet' })
+  @ApiOperation({ summary: 'Create a provider funding intent; does not credit the wallet' })
   create(
     @CurrentUser() user: AuthenticatedUser,
     @Headers('idempotency-key') key: string | undefined,
@@ -44,6 +44,11 @@ export class PaymentsController {
   findOne(@CurrentUser() user: AuthenticatedUser, @Param('id', ParseUUIDPipe) id: string) {
     return this.payments.findOne(user.id, id);
   }
+  @Post(':id/reconcile')
+  @HttpCode(200)
+  reconcile(@CurrentUser() user: AuthenticatedUser, @Param('id', ParseUUIDPipe) id: string) {
+    return this.payments.reconcile(user.id, id);
+  }
   @Get(':id/events')
   events(
     @CurrentUser() user: AuthenticatedUser,
@@ -58,6 +63,14 @@ export class PaymentsController {
 @Controller('payments/webhooks')
 export class PaymentWebhooksController {
   constructor(private readonly payments: PaymentsService) {}
+  @Post('paystack')
+  @HttpCode(200)
+  receivePaystack(
+    @Req() request: RawBodyRequest<Request>,
+    @Headers('x-paystack-signature') signature: string | undefined,
+  ) {
+    return this.payments.receivePaystack(request.rawBody ?? Buffer.alloc(0), signature);
+  }
   @Post('mock')
   @HttpCode(200)
   @ApiHeader({ name: 'Mock-Timestamp', required: true })

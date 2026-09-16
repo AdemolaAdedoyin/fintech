@@ -11,6 +11,22 @@ describe('validateEnvironment', () => {
     LOG_LEVEL: 'info',
   };
 
+  it('validates optional Paystack configuration and live-key isolation', () => {
+    expect(() => validateEnvironment({ ...baseEnvironment, PAYMENT_PROVIDER: 'paystack' })).toThrow(
+      'PAYSTACK_SECRET_KEY',
+    );
+    expect(
+      validateEnvironment({
+        ...baseEnvironment,
+        PAYMENT_PROVIDER: 'paystack',
+        PAYSTACK_SECRET_KEY: 'sk_test_fixture',
+      }).PAYMENT_PROVIDER,
+    ).toBe('paystack');
+    expect(() =>
+      validateEnvironment({ ...baseEnvironment, PAYSTACK_SECRET_KEY: 'sk_live_fixture' }),
+    ).toThrow('production');
+  });
+
   it('coerces and returns valid environment values', () => {
     expect(validateEnvironment(baseEnvironment)).toEqual(
       expect.objectContaining({

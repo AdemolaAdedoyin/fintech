@@ -30,6 +30,7 @@ import { WalletsModule } from './wallets/wallets.module';
             'req.headers.cookie',
             'req.headers.idempotency-key',
             'req.headers.mock-signature',
+            'req.headers["x-paystack-signature"]',
             'req.body.password',
             'req.body.token',
             'req.body.accessToken',
