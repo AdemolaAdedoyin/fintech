@@ -6,7 +6,7 @@ import {
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
-import { Prisma, type Payment } from '@prisma/client';
+import { Prisma, type Payment, type PaymentProvider } from '@prisma/client';
 import { createHash, randomUUID } from 'node:crypto';
 import { LedgerService } from '../ledger/ledger.service';
 import { MAX_MINOR_UNITS } from '../ledger/ledger.invariants';
@@ -19,17 +19,23 @@ import {
 } from './providers/payment-provider';
 import type { CreatePaymentDto, ListPaymentsDto } from './payments.dto';
 import { toPaymentResponse } from './payments.mapper';
+import { ConfigService } from '@nestjs/config';
+import { PaystackProvider } from './providers/paystack-provider';
 
 @Injectable()
 export class PaymentsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly ledger: LedgerService,
+    private readonly config: ConfigService,
+    private readonly paystack: PaystackProvider,
     @Inject(PAYMENT_PROVIDER) private readonly provider: PaymentProviderAdapter,
   ) {}
 
   async create(userId: string, header: string | undefined, input: CreatePaymentDto) {
-    this.provider.assertEnabled();
+    const usePaystack = this.config.get<string>('PAYMENT_PROVIDER') === 'paystack';
+    if (usePaystack) this.paystack.assertEnabled();
+    else this.provider.assertEnabled();
     const key = header?.trim();
     if (!key || !/^[A-Za-z0-9._:-]{1,128}$/.test(key))
       throw new BadRequestException('A valid Idempotency-Key is required');
@@ -53,15 +59,16 @@ export class PaymentsService {
         const wallet = await tx.wallet.findFirst({ where: { id: walletId, userId } });
         if (!wallet) throw new NotFoundException('Wallet not found');
         if (wallet.status !== 'ACTIVE') throw new ConflictException('Wallet must be active');
+        if (usePaystack) this.paystack.validateIntent(input.amountMinor, wallet.currency);
         await tx.$queryRaw`SELECT set_config('app.payment_write', 'on', true)`;
         return tx.payment.create({
           data: {
             userId,
             walletId,
-            provider: this.provider.name,
+            provider: usePaystack ? 'PAYSTACK' : this.provider.name,
             idempotencyKey: key,
             requestHash: hash,
-            reference: `payment:${randomUUID()}`,
+            reference: `payment${usePaystack ? '-' : ':'}${randomUUID()}`,
             amountMinor: BigInt(input.amountMinor),
             currency: wallet.currency,
           },
@@ -78,6 +85,9 @@ export class PaymentsService {
       payment = this.replay(existing, hash);
     }
     if (payment.status !== 'PENDING') return { ...toPaymentResponse(payment), checkoutUrl: null };
+    if (payment.provider === 'PAYSTACK') return this.initializePaystack(payment);
+    // Never initialize an old mock intent with a newly selected real provider.
+    if (usePaystack) throw new ConflictException('Payment belongs to a different provider');
     try {
       // Persist intent before calling the adapter. Retrying a lost response reuses its reference.
       const initialized = await this.provider.initialize({
@@ -91,6 +101,66 @@ export class PaymentsService {
         'Payment initialization unavailable; retry with the same Idempotency-Key',
       );
     }
+  }
+
+  private async initializePaystack(payment: Payment) {
+    this.paystack.assertEnabled();
+    const user = await this.prisma.user.findUniqueOrThrow({ where: { id: payment.userId } });
+    // The durable claim is committed BEFORE external I/O. An uncertain call is never
+    // blindly repeated; reconcile the original reference if the response was lost.
+    const claimed = await this.prisma.paymentCheckout.createMany({
+      data: [{ paymentId: payment.id }],
+      skipDuplicates: true,
+    });
+    if (!claimed.count) {
+      const cached = await this.prisma.paymentCheckout.findUniqueOrThrow({
+        where: { paymentId: payment.id },
+      });
+      if (!cached.checkoutUrl)
+        throw new ServiceUnavailableException(
+          'Checkout initialization is pending or uncertain; reconcile this payment reference',
+        );
+      return { ...toPaymentResponse(payment), checkoutUrl: cached.checkoutUrl };
+    }
+    const initialized = await this.paystack.initialize(
+      {
+        reference: payment.reference,
+        amountMinor: payment.amountMinor.toString(),
+        currency: payment.currency,
+      },
+      user.email,
+    );
+    await this.prisma.paymentCheckout.update({
+      where: { paymentId: payment.id },
+      data: initialized,
+    });
+    return { ...toPaymentResponse(payment), ...initialized };
+  }
+
+  async receivePaystack(rawBody: Buffer, signature: string | undefined) {
+    const reference = this.paystack.webhookReference(rawBody, signature);
+    if (!reference) return { received: true };
+    const payment = await this.prisma.payment.findFirst({
+      where: { provider: 'PAYSTACK', reference },
+    });
+    // A Paystack account can also receive payments for other applications.
+    if (!payment) return { received: true };
+    const event = await this.paystack.reconcile(payment.reference);
+    if (!event)
+      throw new ServiceUnavailableException('Provider has not confirmed success; retry webhook');
+    return this.settleVerified(event, 'PAYSTACK');
+  }
+
+  async reconcile(userId: string, id: string) {
+    const payment = await this.prisma.payment.findFirst({ where: { id, userId } });
+    if (!payment) throw new NotFoundException('Payment not found');
+    if (payment.provider !== 'PAYSTACK')
+      throw new BadRequestException('Reconciliation requires a Paystack payment');
+    if (payment.status === 'PENDING') {
+      const event = await this.paystack.reconcile(payment.reference);
+      if (event) await this.settleVerified(event, 'PAYSTACK');
+    }
+    return this.findOne(userId, id);
   }
 
   private replay(payment: Payment, hash: string): Payment {
@@ -152,9 +222,13 @@ export class PaymentsService {
 
   async receive(rawBody: Buffer, timestamp: string | undefined, signature: string | undefined) {
     const event = this.provider.verify(rawBody, timestamp, signature);
+    return this.settleVerified(event, this.provider.name);
+  }
+
+  private async settleVerified(event: VerifiedPaymentEvent, provider: PaymentProvider) {
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
-        return await this.settle(event);
+        return await this.settle(event, provider);
       } catch (error) {
         const transient =
           error instanceof Prisma.PrismaClientKnownRequestError &&
@@ -169,11 +243,11 @@ export class PaymentsService {
     throw new ServiceUnavailableException('Retry callback');
   }
 
-  private settle(event: VerifiedPaymentEvent) {
+  private settle(event: VerifiedPaymentEvent, provider: PaymentProvider) {
     return this.prisma.$transaction(
       async (tx) => {
         const rows = await tx.$queryRaw<Payment[]>(Prisma.sql`
-        SELECT * FROM "Payment" WHERE "provider" = ${this.provider.name}::"PaymentProvider"
+        SELECT * FROM "Payment" WHERE "provider" = ${provider}::"PaymentProvider"
           AND "reference" = ${event.reference} FOR UPDATE
       `);
         const payment = rows[0];
@@ -185,7 +259,7 @@ export class PaymentsService {
           throw new ConflictException('Provider amount or currency does not match payment intent');
         }
         const existing = await tx.providerEvent.findUnique({
-          where: { provider_eventId: { provider: this.provider.name, eventId: event.eventId } },
+          where: { provider_eventId: { provider: provider, eventId: event.eventId } },
         });
         if (existing) {
           if (existing.payloadHash !== event.payloadHash || existing.paymentId !== payment.id)
@@ -197,7 +271,7 @@ export class PaymentsService {
         await tx.$queryRaw`SELECT set_config('app.payment_write', 'on', true)`;
         await tx.providerEvent.create({
           data: {
-            provider: this.provider.name,
+            provider: provider,
             paymentId: payment.id,
             eventId: event.eventId,
             payloadHash: event.payloadHash,
@@ -216,7 +290,7 @@ export class PaymentsService {
           const ledger = await this.ledger.postWithinTransaction(tx, {
             reference: payment.reference,
             currency: payment.currency,
-            description: 'Verified mock provider funding',
+            description: 'Verified provider funding',
             postings: [
               { accountId: clearing.id, amountMinor: -payment.amountMinor },
               { accountId: wallet.ledgerAccountId, amountMinor: payment.amountMinor },

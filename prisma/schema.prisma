@@ -340,6 +340,7 @@ model WebhookAttempt {
 }
 
 enum PaymentProvider {
+  PAYSTACK
   MOCK
 }
 
@@ -367,6 +368,7 @@ model Payment {
   wallet              Wallet             @relation(fields: [walletId], references: [id], onDelete: Restrict)
   ledgerTransaction   LedgerTransaction? @relation(fields: [ledgerTransactionId], references: [id], onDelete: Restrict)
   events              ProviderEvent[]
+  checkout            PaymentCheckout?
 
   @@unique([userId, idempotencyKey])
   @@index([userId, createdAt, id])
@@ -384,4 +386,11 @@ model ProviderEvent {
 
   @@unique([provider, eventId])
   @@index([paymentId, createdAt, id])
+}
+
+model PaymentCheckout {
+  paymentId String @id @db.Uuid
+  checkoutUrl String? @db.VarChar(512)
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  payment Payment @relation(fields: [paymentId], references: [id], onDelete: Restrict)
 }
