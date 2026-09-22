@@ -4,6 +4,12 @@ const exampleJwtSecret = 'replace-with-at-least-32-random-characters';
 
 const environmentSchema = z
   .object({
+    AUTH_RATE_LIMIT: z.coerce.number().int().min(1).max(10000).default(60),
+    API_DOCS_ENABLED: z.enum(['true', 'false']).optional(),
+    METRICS_TOKEN: z.preprocess(
+      (value) => (value === '' ? undefined : value),
+      z.string().min(32).optional(),
+    ),
     PAYMENT_PROVIDER: z.enum(['disabled', 'mock', 'paystack']).default('disabled'),
     PAYSTACK_SECRET_KEY: z.preprocess(
       (value) => (value === '' ? undefined : value),
@@ -41,6 +47,24 @@ const environmentSchema = z
     OUTBOX_POLL_INTERVAL_MS: z.coerce.number().int().min(100).max(60000).default(1000),
   })
   .superRefine((config, context) => {
+    if (config.NODE_ENV === 'production') {
+      const origins = config.CORS_ORIGIN.split(',').map((value) => value.trim());
+      if (
+        !origins.every((value) => {
+          try {
+            const url = new URL(value);
+            return url.protocol === 'https:' && url.origin === value;
+          } catch {
+            return false;
+          }
+        })
+      )
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['CORS_ORIGIN'],
+          message: 'Production requires explicit HTTPS origins without paths',
+        });
+    }
     if (config.PAYMENT_PROVIDER === 'paystack' && !config.PAYSTACK_SECRET_KEY)
       context.addIssue({
         code: z.ZodIssueCode.custom,

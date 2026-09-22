@@ -27,6 +27,18 @@ describe('validateEnvironment', () => {
     ).toThrow('production');
   });
 
+  it('requires HTTPS CORS origins in production', () => {
+    expect(() => validateEnvironment({ ...baseEnvironment, NODE_ENV: 'production' })).toThrow(
+      'HTTPS',
+    );
+    expect(
+      validateEnvironment({
+        ...baseEnvironment,
+        NODE_ENV: 'production',
+        CORS_ORIGIN: 'https://app.example.com',
+      }).NODE_ENV,
+    ).toBe('production');
+  });
   it('coerces and returns valid environment values', () => {
     expect(validateEnvironment(baseEnvironment)).toEqual(
       expect.objectContaining({

@@ -20,6 +20,8 @@ export class AsyncWorkerService implements OnModuleInit, OnModuleDestroy {
   private workerRedis?: IORedis;
   private pollTimer?: NodeJS.Timeout;
   private dispatching = false;
+  private stopping = false;
+  private dispatchDone?: Promise<void>;
 
   constructor(
     private readonly config: ConfigService,
@@ -29,8 +31,15 @@ export class AsyncWorkerService implements OnModuleInit, OnModuleDestroy {
 
   async onModuleInit(): Promise<void> {
     const redisUrl = this.config.getOrThrow<string>('REDIS_URL');
-    this.queueRedis = new IORedis(redisUrl, { maxRetriesPerRequest: null });
+    this.queueRedis = new IORedis(redisUrl, {
+      maxRetriesPerRequest: 1,
+      enableOfflineQueue: false,
+      commandTimeout: 2000,
+      connectTimeout: 1000,
+    });
+    this.queueRedis.on('error', () => this.logger.warn('Notification producer Redis unavailable'));
     this.workerRedis = new IORedis(redisUrl, { maxRetriesPerRequest: null });
+    this.workerRedis.on('error', () => this.logger.warn('Notification consumer Redis unavailable'));
     this.queue = new Queue<NotificationJobData>(NOTIFICATION_QUEUE, {
       connection: this.queueRedis,
     });
@@ -39,8 +48,10 @@ export class AsyncWorkerService implements OnModuleInit, OnModuleDestroy {
       (job) => this.persistNotification(job),
       { connection: this.workerRedis, concurrency: 10 },
     );
+    this.queue.on('error', () => this.logger.warn('Notification queue unavailable'));
+    this.worker.on('error', () => this.logger.warn('Notification worker unavailable'));
     this.worker.on('failed', (job, error) => {
-      this.logger.error(`Notification job ${job?.id ?? 'unknown'} failed: ${error.message}`);
+      this.logger.error(`Notification job ${job?.id ?? 'unknown'} failed: ${error.name}`);
     });
 
     await this.dispatchOnce();
@@ -50,19 +61,34 @@ export class AsyncWorkerService implements OnModuleInit, OnModuleDestroy {
   }
 
   async onModuleDestroy(): Promise<void> {
+    this.stopping = true;
     if (this.pollTimer) clearInterval(this.pollTimer);
+    await this.dispatchDone;
     await this.worker?.close();
     await this.queue?.close();
-    await Promise.all([this.workerRedis?.quit(), this.queueRedis?.quit()]);
+    this.workerRedis?.disconnect();
+    this.queueRedis?.disconnect();
   }
 
-  async dispatchOnce(): Promise<void> {
+  dispatchOnce(): Promise<void> {
+    if (this.stopping) return Promise.resolve();
+    if (this.dispatchDone) return this.dispatchDone;
+    this.dispatchDone = this.dispatchBatch().finally(() => {
+      this.dispatchDone = undefined;
+    });
+    return this.dispatchDone;
+  }
+
+  private async dispatchBatch(): Promise<void> {
     if (this.dispatching || !this.queue) return;
     this.dispatching = true;
 
     try {
       const events = await this.claimBatch();
       for (const event of events) await this.publish(event);
+      await this.queueRedis?.set('fintech:worker:last-poll', String(Date.now()), 'EX', 300);
+    } catch {
+      this.logger.warn('Notification polling failed; next poll will retry');
     } finally {
       this.dispatching = false;
     }
@@ -106,7 +132,7 @@ export class AsyncWorkerService implements OnModuleInit, OnModuleDestroy {
         data: { status: OutboxStatus.PUBLISHED, lockedAt: null, publishedAt: new Date() },
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown queue publishing error';
+      const message = error instanceof Error ? error.name : 'Queue publishing error';
       const delayMs = Math.min(2 ** Math.min(event.attempts, 6) * 1_000, 60_000);
       await this.prisma.outboxEvent.update({
         where: { id: event.id },

@@ -4,6 +4,32 @@ A production-style backend project for wallets, transfers, ledger accounting, re
 
 This repository is being rebuilt from the original JavaScript/MySQL fintech API and selected concepts from the experimental `riseBeta` repository. The modernization is intentionally phased so each layer can be reviewed before the next one is added.
 
+
+## Run the complete local workflow
+
+```sh
+npm ci
+npm run local:setup
+API_PORT=3001 npm run local:up
+API_PORT=3001 npm run local:smoke
+```
+
+The setup creates private random local secrets only when `.env` is absent; existing settings
+are preserved. The generated profile enables mock funding. The smoke test registers users,
+funds once despite callback replay, transfers, reverses, and verifies final balances.
+Port 3001 avoids another local app on 3000. Docs: `http://127.0.0.1:3001/docs`.
+For an existing `.env`, enable mock payments and its signing secret before the smoke test.
+
+- [API guide and examples](docs/API.md) · [OpenAPI specification](docs/openapi.json)
+- [Local/dev/production operations and monitoring](docs/OPERATIONS.md)
+- [Architecture](docs/ARCHITECTURE.md) · [Final readiness audit](docs/AUDIT.md)
+- [Paystack test-account acceptance](docs/PAYSTACK.md)
+
+Readiness now checks PostgreSQL and Redis; login/register have shared Redis rate limits.
+Private aggregate metrics expose outbox, webhook, payment and worker-poll state. Production
+runtime preparation is in `docker-compose.production.yml`; it is separate from the local
+stack and does not deploy anything. Real Paystack acceptance requires your test account.
+
 ## Modernization status
 
 ### Phase 1 — secure platform foundation ✅
@@ -15,7 +41,7 @@ This repository is being rebuilt from the original JavaScript/MySQL fintech API 
 - structured JSON logging with sensitive-field redaction
 - Helmet security headers and explicit CORS configuration
 - Swagger/OpenAPI documentation
-- liveness and PostgreSQL readiness endpoints
+- liveness and PostgreSQL/Redis readiness endpoints
 - graceful application shutdown hooks
 - strict linting, formatting, type checking, unit tests, build checks, dependency audit, container validation, and CI smoke test
 
@@ -108,7 +134,7 @@ Phase 5 remains synchronous. Redis/BullMQ, transactional outbox dispatch, notifi
 5. **Reversals and audit** — compensating ledger entries, reversal rules, audit history. ✅
 6. **Async infrastructure** — Redis/BullMQ, outbox processing, notifications, retryable webhook delivery. ✅
 7. **Provider abstraction** — Phase 7A mock provider and Phase 7B Paystack hosted checkout with verified wallet funding implemented. ✅
-8. **Production polish** — deployment, observability, expanded security testing, architecture documentation.
+8. **Production readiness** — local/runtime preparation, monitoring, security regressions and documentation implemented; external acceptance/release gates remain.
 
 After the useful RiseBeta concepts are represented safely in this project, `riseBeta` will be archived as an earlier experimental iteration.
 
@@ -148,7 +174,7 @@ The Docker Redis service is exposed to host-run workers and tests at `redis://lo
 | `GET`    | `/api/v1/beneficiaries`                  | List active saved beneficiaries                                                           |
 | `DELETE` | `/api/v1/beneficiaries/:beneficiaryId`   | Soft-delete a saved beneficiary                                                           |
 | `GET`    | `/api/v1/health/live`                    | Process liveness                                                                          |
-| `GET`    | `/api/v1/health/ready`                   | PostgreSQL readiness                                                                      |
+| `GET`    | `/api/v1/health/ready`                   | PostgreSQL/Redis readiness                                                                      |
 
 Swagger is available at `/docs` and documents the transfer/reversal `Idempotency-Key` headers and request DTOs.
 
@@ -681,6 +707,14 @@ or real charge is needed for CI.
 Protocol references: [transaction initialization and verification](https://paystack.com/docs/api/transaction/)
 and [webhook signatures and retries](https://paystack.com/docs/payments/webhooks/).
 
-Remaining roadmap: **Phase 8 — production readiness**, including deployment configuration,
-observability, expanded security tests, architecture/operations documentation, and external
-Paystack test-account acceptance. Deployment and live payment activation are separate actions.
+Phase 8 readiness implementation is available; see the guides below. External Paystack
+test-account acceptance and infrastructure-specific release gates remain pending. Nothing
+has been deployed or activated for live payments.
+
+
+## Phase 8: local and runtime readiness
+
+Implemented local setup/smoke commands, Redis readiness and authentication limits, private
+metrics, resilient notification polling, a read-only ledger audit, production runtime preparation,
+and API/architecture/operations documentation. Nothing has been deployed. Real Paystack acceptance
+and environment-specific launch gates remain pending; see [the audit](docs/AUDIT.md).

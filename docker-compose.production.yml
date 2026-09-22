@@ -1,0 +1,61 @@
+# Standalone external-service runtime configuration. This file does not provision infrastructure.
+services:
+  migrate:
+    build:
+      context: .
+      target: migrate
+    environment:
+      DATABASE_URL: ${MIGRATION_DATABASE_URL:?Set the migration database URL}
+    restart: 'no'
+  api:
+    build: .
+    init: true
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    environment: &runtime
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: ${DATABASE_URL:?Set the runtime database URL}
+      REDIS_URL: ${REDIS_URL:?Set the Redis URL}
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?Set a private JWT secret}
+      CORS_ORIGIN: ${CORS_ORIGIN:?Set explicit HTTPS origins}
+      WEBHOOK_ENCRYPTION_KEY: ${WEBHOOK_ENCRYPTION_KEY:?Set a stable webhook encryption key}
+      METRICS_TOKEN: ${METRICS_TOKEN:?Set a private metrics token}
+      PAYMENT_PROVIDER: ${PAYMENT_PROVIDER:-disabled}
+      PAYSTACK_SECRET_KEY: ${PAYSTACK_SECRET_KEY:-}
+      API_DOCS_ENABLED: 'false'
+      AUTH_RATE_LIMIT: ${AUTH_RATE_LIMIT:-60}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    ports: ['127.0.0.1:${API_PORT:-3000}:3000']
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -q -O - http://127.0.0.1:3000/api/v1/health/ready >/dev/null 2>&1']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options: {max-size: '10m', max-file: '3'}
+  worker:
+    build: .
+    init: true
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    command: ['node', 'dist/worker.js']
+    environment: *runtime
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options: {max-size: '10m', max-file: '3'}
