@@ -45,27 +45,30 @@ services:
       context: .
       dockerfile: Dockerfile
     environment:
-      NODE_ENV: development
+      NODE_ENV: ${NODE_ENV:-development}
       PORT: 3000
       DATABASE_URL: postgresql://fintech:fintech_dev@postgres:5432/fintech?schema=public
       JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?JWT_ACCESS_SECRET must be set in .env}
       JWT_ACCESS_TTL_SECONDS: ${JWT_ACCESS_TTL_SECONDS:-900}
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:3000}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      METRICS_TOKEN: ${METRICS_TOKEN:-}
+      AUTH_RATE_LIMIT: ${AUTH_RATE_LIMIT:-60}
+      API_DOCS_ENABLED: ${API_DOCS_ENABLED:-true}
       REDIS_URL: redis://redis:6379
       WEBHOOK_ENCRYPTION_KEY: ${WEBHOOK_ENCRYPTION_KEY:-}
       PAYMENT_PROVIDER: ${PAYMENT_PROVIDER:-disabled}
       PAYSTACK_SECRET_KEY: ${PAYSTACK_SECRET_KEY:-}
       MOCK_PROVIDER_WEBHOOK_SECRET: ${MOCK_PROVIDER_WEBHOOK_SECRET:-}
     ports:
-      - '3000:3000'
+      - '127.0.0.1:${API_PORT:-3000}:3000'
     depends_on:
       postgres:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
     healthcheck:
-      test: ['CMD-SHELL', 'wget -q -O - http://localhost:3000/api/v1/health/ready >/dev/null 2>&1']
+      test: ['CMD-SHELL', 'wget -q -O - http://127.0.0.1:3000/api/v1/health/ready >/dev/null 2>&1']
       interval: 10s
       timeout: 5s
       retries: 5
@@ -77,12 +80,15 @@ services:
       dockerfile: Dockerfile
     command: ['node', 'dist/worker.js']
     environment:
-      NODE_ENV: development
+      NODE_ENV: ${NODE_ENV:-development}
       DATABASE_URL: postgresql://fintech:fintech_dev@postgres:5432/fintech?schema=public
       JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?JWT_ACCESS_SECRET must be set in .env}
       JWT_ACCESS_TTL_SECONDS: ${JWT_ACCESS_TTL_SECONDS:-900}
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:3000}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      METRICS_TOKEN: ${METRICS_TOKEN:-}
+      AUTH_RATE_LIMIT: ${AUTH_RATE_LIMIT:-60}
+      API_DOCS_ENABLED: ${API_DOCS_ENABLED:-true}
       REDIS_URL: redis://redis:6379
       WEBHOOK_ENCRYPTION_KEY: ${WEBHOOK_ENCRYPTION_KEY:-}
       PAYMENT_PROVIDER: ${PAYMENT_PROVIDER:-disabled}

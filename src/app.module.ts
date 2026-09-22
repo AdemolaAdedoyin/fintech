@@ -1,3 +1,6 @@
+import { APP_GUARD } from '@nestjs/core';
+import { OperationsModule } from './operations/operations.module';
+import { AuthRateGuard } from './operations/auth-rate.guard';
 import { PaymentsModule } from './payments/payments.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
 import { Module } from '@nestjs/common';
@@ -15,6 +18,7 @@ import { TransfersModule } from './transfers/transfers.module';
 import { WalletsModule } from './wallets/wallets.module';
 
 @Module({
+  providers: [{ provide: APP_GUARD, useClass: AuthRateGuard }],
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
@@ -42,6 +46,7 @@ import { WalletsModule } from './wallets/wallets.module';
       },
     }),
     PrismaModule,
+    OperationsModule,
     HealthModule,
     AuthModule,
     WalletsModule,

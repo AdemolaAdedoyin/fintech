@@ -29,7 +29,14 @@
     "db:migrate": "prisma migrate dev",
     "db:migrate:deploy": "prisma migrate deploy",
     "db:studio": "prisma studio",
-    "ci": "npm run format:check && npm run lint && npm run typecheck && npm test && npm run prisma:validate && npm run build"
+    "ci": "npm run format:check && npm run lint && npm run typecheck && npm test && npm run prisma:validate && npm run build",
+    "local:setup": "node scripts/setup-local.mjs",
+    "local:up": "npm run local:setup && docker compose up --build -d --wait",
+    "local:down": "docker compose down",
+    "local:smoke": "node --env-file=.env scripts/smoke-local.mjs",
+    "paystack:check": "node scripts/paystack-test-account.mjs",
+    "docs:export": "node scripts/export-openapi.mjs",
+    "audit:ledger": "node scripts/audit-ledger.mjs"
   },
   "dependencies": {
     "@nestjs/common": "^11.2.3",

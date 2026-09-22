@@ -17,6 +17,16 @@ async function bootstrap(): Promise<void> {
   app.useLogger(app.get(Logger));
   app.enableShutdownHooks();
   app.use(helmet());
+  app.use(
+    (
+      _req: import('express').Request,
+      res: import('express').Response,
+      next: import('express').NextFunction,
+    ) => {
+      res.setHeader('Cache-Control', 'no-store');
+      next();
+    },
+  );
   app.setGlobalPrefix('api/v1');
   app.useGlobalPipes(
     new ValidationPipe({
@@ -37,17 +47,23 @@ async function bootstrap(): Promise<void> {
     credentials: false,
   });
 
-  const swaggerConfig = new DocumentBuilder()
-    .setTitle('Fintech Transaction Platform')
-    .setDescription('Wallet, ledger, transfer, reversal, and payment infrastructure API.')
-    .setVersion('1.0')
-    .addBearerAuth()
-    .build();
+  if (
+    config.get<string>('API_DOCS_ENABLED') === 'true' ||
+    (config.get<string>('API_DOCS_ENABLED') !== 'false' &&
+      config.get<string>('NODE_ENV') !== 'production')
+  ) {
+    const swaggerConfig = new DocumentBuilder()
+      .setTitle('Fintech Transaction Platform')
+      .setDescription('Wallet, ledger, transfer, reversal, and payment infrastructure API.')
+      .setVersion('1.0')
+      .addBearerAuth()
+      .build();
 
-  const document = SwaggerModule.createDocument(app, swaggerConfig);
-  SwaggerModule.setup('docs', app, document, {
-    jsonDocumentUrl: 'docs-json',
-  });
+    const document = SwaggerModule.createDocument(app, swaggerConfig);
+    SwaggerModule.setup('docs', app, document, {
+      jsonDocumentUrl: 'docs-json',
+    });
+  }
 
   const port = config.getOrThrow<number>('PORT');
   await app.listen(port, '0.0.0.0');

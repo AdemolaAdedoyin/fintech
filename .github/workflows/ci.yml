@@ -73,11 +73,20 @@ jobs:
       - name: Quality gates
         run: npm run ci
 
+      - name: Validate API specification and scripts
+        run: |
+          npm run docs:export
+          git diff --exit-code -- docs/openapi.json
+          for script in scripts/*.mjs; do node --check "$script"; done
+
       - name: Apply database migrations
         run: npm run db:migrate:deploy
 
       - name: Domain e2e tests
         run: npm run test:e2e
+
+      - name: Audit ledger invariants
+        run: npm run audit:ledger
 
       - name: Validate container definitions
         run: |
@@ -89,10 +98,16 @@ jobs:
         shell: bash
         run: |
           test -f dist/main.js
+          export PAYMENT_PROVIDER=mock
+          export MOCK_PROVIDER_WEBHOOK_SECRET=ci-only-private-mock-fixture-longer-than-thirty-two-characters
+          export METRICS_TOKEN=ci-only-private-metrics-fixture-longer-than-thirty-two-characters
+          node dist/worker.js > /tmp/fintech-worker.log 2>&1 &
+          WORKER_PID=$!
           node dist/main.js > /tmp/fintech-api.log 2>&1 &
           APP_PID=$!
 
           cleanup() {
+            kill "$WORKER_PID" 2>/dev/null || true
             if kill -0 "$APP_PID" 2>/dev/null; then
               kill "$APP_PID"
             fi
@@ -102,6 +117,7 @@ jobs:
           for attempt in {1..20}; do
             if curl --fail --silent http://localhost:3000/api/v1/health/ready > /tmp/health.json; then
               cat /tmp/health.json
+              node scripts/smoke-local.mjs
               exit 0
             fi
 

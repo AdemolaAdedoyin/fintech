@@ -1,0 +1,23 @@
+import 'reflect-metadata';
+import { createRequire } from 'node:module';
+import { writeFile, mkdir } from 'node:fs/promises';
+const require = createRequire(import.meta.url);
+// Export does not initialize database/Redis lifecycle hooks; connection URLs below are placeholders.
+process.env.NODE_ENV = 'test';
+process.env.PAYMENT_PROVIDER = 'disabled';
+process.env.DATABASE_URL = 'postgresql://docs:docs@127.0.0.1:1/docs';
+process.env.REDIS_URL = 'redis://127.0.0.1:1';
+process.env.JWT_ACCESS_SECRET = 'openapi-export-only-not-an-application-secret';
+process.env.LOG_LEVEL = 'silent';
+delete process.env.PAYSTACK_SECRET_KEY;
+const { NestFactory } = require('@nestjs/core');
+const { SwaggerModule, DocumentBuilder } = require('@nestjs/swagger');
+const { AppModule } = require('../dist/app.module');
+const app = await NestFactory.create(AppModule, {logger:false});
+app.setGlobalPrefix('api/v1');
+const config = new DocumentBuilder().setTitle('Fintech Transaction Platform').setDescription('Wallet, ledger, transfer, reversal, and payment infrastructure API. See docs/API.md for response examples and error/retry semantics.').setVersion('1.0').addBearerAuth().build();
+const document = SwaggerModule.createDocument(app,config);
+await mkdir('docs',{recursive:true});
+await writeFile('docs/openapi.json', `${JSON.stringify(document,null,2)}\n`);
+await app.close();
+console.log(`Exported ${Object.keys(document.paths).length} API paths to docs/openapi.json`);
